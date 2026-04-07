@@ -72,3 +72,5 @@ tmp/
 
 # OS
 Thumbs.db
+CLAUDE.md
+.gitmodules
