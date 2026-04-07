@@ -1,0 +1,29 @@
+cluster.name: "knowlebase-cluster"
+network.host: 0.0.0.0
+
+# 单节点模式
+discovery.type: single-node
+
+# 禁用安全特性（开发环境）
+xpack.security.enabled: false
+xpack.security.transport.ssl.enabled: false
+
+# 内存设置
+bootstrap.memory_lock: false
+
+# 跨域设置
+http.cors.enabled: true
+http.cors.allow-origin: "*"
+http.cors.allow-headers: X-Requested-With,Content-Type,Content-Length,Authorization
+
+# 索引设置
+indices.query.bool.max_clause_count: 4096
+
+# 中文分词器配置
+index:
+  analysis:
+    analyzer:
+      chinese_analyzer:
+        type: custom
+        tokenizer: ik_max_word
+        filter: [lowercase]

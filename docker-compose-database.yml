@@ -1,0 +1,191 @@
+version: '3.8'
+
+services:
+  # 关系数据库：存储用户信息、文档元数据、系统配置等结构化数据
+  postgres:
+    image: postgres:15-alpine
+    container_name: knowlebase-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-knowlebase}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-knowlebase_password}
+      POSTGRES_DB: ${POSTGRES_DB:-knowlebase}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U knowlebase"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - knowlebase-network
+
+  # 全文检索引擎：关键词搜索、文档内容索引
+  elasticsearch:
+    image: elasticsearch:8.12.0
+    container_name: knowlebase-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - cluster.name=knowlebase-cluster
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+      - ./config/elasticsearch/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml
+      - ./config/elasticsearch/plugins:/usr/share/elasticsearch/plugins
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -q '\"status\":\"green\"' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - knowlebase-network
+
+  # 向量数据库：语义搜索、向量相似性检索
+  milvus:
+    image: milvusdb/milvus:v2.4.0
+    container_name: knowlebase-milvus
+    environment:
+      - ETCD_ENDPOINTS=etcd:2379
+      - MINIO_ADDRESS=minio:9000
+    volumes:
+      - milvus_data:/var/lib/milvus
+    ports:
+      - "19530:19530"
+      - "9091:9091"
+    depends_on:
+      - etcd
+      - minio
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - knowlebase-network
+
+  # Milvus依赖：元数据存储
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.5
+    container_name: knowlebase-etcd
+    environment:
+      - ETCD_AUTO_COMPACTION_MODE=revision
+      - ETCD_AUTO_COMPACTION_RETENTION=1000
+      - ETCD_QUOTA_BACKEND_BYTES=4294967296
+      - ETCD_SNAPSHOT_COUNT=50000
+    volumes:
+      - etcd_data:/etcd
+    command: etcd -advertise-client-urls=http://etcd:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    networks:
+      - knowlebase-network
+
+  # Milvus依赖：对象存储
+  minio:
+    image: minio/minio:latest
+    container_name: knowlebase-minio
+    environment:
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    volumes:
+      - minio_data:/data
+    command: minio server /data --console-address ":9090"
+    ports:
+      - "9090:9090"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks:
+      - knowlebase-network
+
+  # 图数据库：知识图谱、实体关系存储
+  neo4j:
+    image: neo4j:5.15.0
+    container_name: knowlebase-neo4j
+    environment:
+      - NEO4J_AUTH=${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-knowlebase_password}
+      - NEO4J_PLUGINS=["apoc", "graph-data-science"]
+      - NEO4J_ACCEPT_LICENSE_AGREEMENT=yes
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+      - neo4j_import:/var/lib/neo4j/import
+      - neo4j_plugins:/plugins
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "knowlebase_password", "RETURN 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - knowlebase-network
+
+volumes:
+  postgres_data:
+    driver: local
+    driver_opts:
+      type: 'none'
+      o: 'bind'
+      device: /E/project/knowlebase-volume/postgres_data
+  elasticsearch_data:
+    driver: local
+    driver_opts:
+      type: 'none'
+      o: 'bind'
+      device: /E/project/knowlebase-volume/elasticsearch_data
+  milvus_data:
+    driver: local
+    driver_opts:
+      type: 'none'
+      o: 'bind'
+      device: /E/project/knowlebase-volume/milvus_data
+  etcd_data:
+    driver: local
+    driver_opts:
+      type: 'none'
+      o: 'bind'
+      device: /E/project/knowlebase-volume/etcd_data
+  minio_data:
+    driver: local
+    driver_opts:
+      type: 'none'
+      o: 'bind'
+      device: /E/project/knowlebase-volume/minio_data
+  neo4j_data:
+    driver: local
+    driver_opts:
+      type: 'none'
+      o: 'bind'
+      device: /E/project/knowlebase-volume/neo4j_data
+  neo4j_logs:
+    driver: local
+    driver_opts:
+      type: 'none'
+      o: 'bind'
+      device: /E/project/knowlebase-volume/neo4j_logs
+  neo4j_import:
+    driver: local
+    driver_opts:
+      type: 'none'
+      o: 'bind'
+      device: /E/project/knowlebase-volume/neo4j_import
+  neo4j_plugins:
+    driver: local
+    driver_opts:
+      type: 'none'
+      o: 'bind'
+      device: /E/project/knowlebase-volume/neo4j_plugins
+
+networks:
+  knowlebase-network:
+    driver: bridge
