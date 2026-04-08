@@ -1,0 +1,23 @@
+# 知识库系统一键启动配置文件
+# 此文件引用两个独立的Compose配置：
+# 1. docker-compose-midware.yml - 中间件服务（数据库、搜索引擎等）
+# 2. docker-compose-app.yml - 应用程序服务（后端API、前端界面）
+#
+# 使用方法：
+#   docker-compose up -d      # 启动所有服务
+#   docker-compose down       # 停止所有服务
+#
+# 单独启动中间件（用于本地开发）：
+#   docker-compose -f docker-compose-midware.yml up -d
+#
+# 单独启动应用程序（需要中间件已运行）：
+#   docker-compose -f docker-compose-app.yml up -d
+
+# 使用include指令引用其他Compose文件
+# 需要 Docker Compose v2.20+ 或更新版本
+include:
+  - docker-compose-midware.yml
+  - docker-compose-app.yml
+
+# 注意：如果Docker Compose版本较低，请使用以下命令替代：
+#   docker-compose -f docker-compose-midware.yml -f docker-compose-app.yml up -d
