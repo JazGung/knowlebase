@@ -18,12 +18,3 @@ http.cors.allow-headers: X-Requested-With,Content-Type,Content-Length,Authorizat
 
 # 索引设置
 indices.query.bool.max_clause_count: 4096
-
-# 中文分词器配置
-index:
-  analysis:
-    analyzer:
-      chinese_analyzer:
-        type: custom
-        tokenizer: ik_max_word
-        filter: [lowercase]
