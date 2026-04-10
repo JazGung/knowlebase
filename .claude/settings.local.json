@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find E:\\\\project\\\\knowlebase:*)",
+      "Bash(python -m pip list)",
+      "Bash(python test_imports.py)",
+      "Bash(pip install:*)",
+      "Bash(python:*)",
+      "Bash(ls /e/project/knowlebase/backend/*.py)",
+      "Bash(ls /e/project/knowlebase/backend/*.txt /e/project/knowlebase/backend/*.env /e/project/knowlebase/backend/*.cfg /e/project/knowlebase/backend/*.toml /e/project/knowlebase/backend/*.ini)",
+      "Bash(pip show:*)"
+    ]
+  }
+}

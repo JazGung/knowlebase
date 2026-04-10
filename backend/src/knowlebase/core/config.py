@@ -68,11 +68,35 @@ class Settings(BaseSettings):
     neo4j_port: int = Field(default=7687, env="NEO4J_PORT")
     neo4j_user: str = Field(default="neo4j", env="NEO4J_USER")
     neo4j_password: str = Field(default="knowlebase_password", env="NEO4J_PASSWORD")
+    neo4j_raw_url: Optional[str] = Field(default=None, env="NEO4J_URL")  # 可选，优先使用 .env 中的配置
 
     @property
     def neo4j_url(self) -> str:
         """构建 Neo4j 连接 URL"""
+        if self.neo4j_raw_url:
+            return self.neo4j_raw_url
         return f"bolt://{self.neo4j_host}:{self.neo4j_port}"
+
+    # ====================
+    # Minio对象存储配置
+    # ====================
+
+    # Minio连接配置
+    minio_endpoint: str = Field(default="localhost:9000", env="MINIO_ENDPOINT")
+    minio_access_key: str = Field(default="minioadmin", env="MINIO_ACCESS_KEY")
+    minio_secret_key: str = Field(default="minioadmin", env="MINIO_SECRET_KEY")
+    minio_secure: bool = Field(default=False, env="MINIO_SECURE")  # 是否使用HTTPS
+    minio_region: Optional[str] = Field(default=None, env="MINIO_REGION")
+
+    # Minio存储桶配置
+    minio_document_bucket: str = Field(default="knowlebase-documents", env="MINIO_DOCUMENT_BUCKET")
+    minio_temp_bucket: str = Field(default="knowlebase-temp", env="MINIO_TEMP_BUCKET")
+
+    @property
+    def minio_endpoint_url(self) -> str:
+        """构建Minio端点URL"""
+        protocol = "https" if self.minio_secure else "http"
+        return f"{protocol}://{self.minio_endpoint}"
 
     # ====================
     # 应用程序配置
@@ -110,7 +134,7 @@ class Settings(BaseSettings):
 
     class Config:
         # 优先读取 backend/.env（如果存在）
-        env_file = Path(__file__).parent.parent / ".env"
+        env_file = Path(__file__).parent.parent.parent / ".env"
         env_file_encoding = "utf-8"
 
         # 允许环境变量覆盖
@@ -130,6 +154,7 @@ class Settings(BaseSettings):
             "elasticsearch": f"{self.elasticsearch_host}:{self.elasticsearch_port}",
             "milvus": f"{self.milvus_host}:{self.milvus_port}",
             "neo4j": f"{self.neo4j_host}:{self.neo4j_port}",
+            "minio": f"{self.minio_endpoint}/{self.minio_document_bucket}",
             "development_mode": self.is_local_development(),
             "docker_container": self.docker_container,
         }

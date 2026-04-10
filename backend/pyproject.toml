@@ -1,0 +1,8 @@
+[project]
+name = "knowlebase"
+version = "1.0.0"
+description = "企业内部知识库文档管理和智能检索系统"
+requires-python = ">=3.10"
+
+[tool.setuptools.packages.find]
+where = ["src"]
