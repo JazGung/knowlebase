@@ -6,7 +6,7 @@ const fs = require('fs');
   // Create a simple test PDF file (minimal valid PDF) with unique content for unique hash
   const uniqueContent = `test-file-${Date.now()}-content`;
   const testPdfContent = Buffer.from(`%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[]/Count 0>>endobj\n%% Test: ${uniqueContent}`);
-  const testFilePath = `E:/project/knowlebase/frontend/test-file-${Date.now()}.pdf`;
+  const testFilePath = `E:/project/knowlebase/backend/res/document/test-file-${Date.now()}.pdf`;
   fs.writeFileSync(testFilePath, testPdfContent);
   console.log('Created test file:', testPdfContent.length, 'bytes');
 
@@ -70,7 +70,7 @@ const fs = require('fs');
   console.log('\nPage content (first 600 chars):');
   console.log(bodyText.substring(0, 600));
 
-  await page.screenshot({ path: 'E:/project/knowlebase/frontend/screenshot-result.png' });
+  await page.screenshot({ path: 'E:/project/knowlebase/frontend/res/screenshot-result.png' });
 
   // Check for success in result table
   const successText = bodyText.includes('成功') || bodyText.includes('success');

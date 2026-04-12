@@ -9,7 +9,7 @@
  * 5. 前端状态校验优先于确认框
  * 6. 文档启用/停用切换
  *
- * 运行方式: npx playwright test --config=playwright.config.cjs
+ * 运行方式: cd backend/res/e2e && node test-frontend.cjs
  */
 const { chromium } = require('E:/project/knowlebase/frontend/node_modules/playwright');
 const assert = require('assert');
