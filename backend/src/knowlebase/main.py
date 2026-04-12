@@ -90,7 +90,7 @@ def create_app() -> FastAPI:
     async def global_exception_handler(request, exc):
         logger.error(f"全局异常: {exc}", exc_info=True)
         return JSONResponse(
-            status_code=500,
+            status_code=200,
             content={
                 "code": 500,
                 "message": "服务器内部错误",

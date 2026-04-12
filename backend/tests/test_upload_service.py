@@ -5,6 +5,7 @@
 import hashlib
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+from fastapi import HTTPException
 
 from knowlebase.admin.document.service import UploadService
 
@@ -184,3 +185,107 @@ class TestBatchCheckDuplicates:
             {"hash": "a" * 32},
         ])
         assert result == []
+
+
+class TestProcessUpload:
+    """测试文件上传完整流程"""
+
+    @pytest.fixture
+    def service(self):
+        mock_minio = MagicMock()
+        mock_minio.upload_file = MagicMock(return_value=True)
+        return UploadService(minio_service=mock_minio)
+
+    @pytest.mark.asyncio
+    async def test_successful_upload(self, service):
+        content = b"test pdf content"
+        file_hash = compute_md5(content)
+        mock_file = make_mock_upload_file("test.pdf", content)
+
+        mock_db = AsyncMock()
+        mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
+        mock_db.commit = AsyncMock()
+        mock_db.refresh = AsyncMock()
+
+        result = await service.process_upload(mock_db, mock_file, file_hash)
+        assert result["status"] == "success"
+        assert result["file_hash"] == file_hash
+        assert "document_id" in result
+        assert "processing_id" in result
+        service.minio_service.upload_file.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_duplicate_file(self, service):
+        content = b"test pdf content"
+        file_hash = compute_md5(content)
+        mock_file = make_mock_upload_file("test.pdf", content)
+
+        mock_db = AsyncMock()
+        existing_doc = MagicMock()
+        existing_doc.id = "doc_existing_001"
+        existing_doc.file_hash = file_hash
+        existing_doc.original_filename = "existing.pdf"
+        mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=existing_doc)))
+
+        result = await service.process_upload(mock_db, mock_file, file_hash)
+        assert result["status"] == "duplicate"
+        assert result["document_id"] == "doc_existing_001"
+        service.minio_service.upload_file.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_integrity_check_failure(self, service):
+        content = b"test pdf content"
+        mock_file = make_mock_upload_file("test.pdf", content)
+        wrong_hash = "0" * 32
+
+        mock_db = AsyncMock()
+
+        with pytest.raises(HTTPException) as exc_info:
+            await service.process_upload(mock_db, mock_file, wrong_hash)
+        assert exc_info.value.status_code == 400
+        assert "上传文件不完整" in str(exc_info.value.detail)
+
+    @pytest.mark.asyncio
+    async def test_invalid_format(self, service):
+        content = b"test image content"
+        file_hash = compute_md5(content)
+        mock_file = make_mock_upload_file("test.png", content)
+
+        mock_db = AsyncMock()
+
+        with pytest.raises(HTTPException) as exc_info:
+            await service.process_upload(mock_db, mock_file, file_hash)
+        assert exc_info.value.status_code == 400
+        assert "格式" in str(exc_info.value.detail)
+
+    @pytest.mark.asyncio
+    async def test_file_too_large(self, service):
+        content = b"x" * (104857601)
+        file_hash = compute_md5(content)
+        mock_file = make_mock_upload_file("big.pdf", content)
+
+        mock_db = AsyncMock()
+
+        with pytest.raises(HTTPException) as exc_info:
+            await service.process_upload(mock_db, mock_file, file_hash)
+        assert exc_info.value.status_code == 400
+        assert "大小" in str(exc_info.value.detail)
+
+    @pytest.mark.asyncio
+    async def test_db_commit_failure_cleanup(self, service):
+        content = b"test pdf content"
+        file_hash = compute_md5(content)
+        mock_file = make_mock_upload_file("test.pdf", content)
+
+        service.minio_service.file_exists = MagicMock(return_value=True)
+        service.minio_service.delete_file = MagicMock(return_value=True)
+
+        mock_db = AsyncMock()
+        mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
+        mock_db.commit = AsyncMock(side_effect=Exception("DB error"))
+
+        with pytest.raises(HTTPException) as exc_info:
+            await service.process_upload(mock_db, mock_file, file_hash)
+        assert exc_info.value.status_code == 500
+        # Verify orphaned file cleanup was attempted
+        service.minio_service.delete_file.assert_called_once()

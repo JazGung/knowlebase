@@ -9,7 +9,6 @@ from datetime import datetime
 from typing import Optional, Dict, Any
 
 from sqlalchemy import Column, String, BigInteger, Text, JSON, TIMESTAMP, ForeignKey, Index
-from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 from sqlalchemy.orm import validates, relationship
 
@@ -28,10 +27,9 @@ class FileCleanupLog(Base):
 
     # 主键
     id = Column(
-        UUID(as_uuid=True),
+        BigInteger,
         primary_key=True,
-        default=uuid.uuid4,
-        server_default=func.gen_random_uuid(),
+        autoincrement=True,
         comment="清理日志唯一标识"
     )
 
@@ -68,8 +66,7 @@ class FileCleanupLog(Base):
 
     # 外键关联（可选，关联到用户）
     user_id = Column(
-        UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="SET NULL"),
+        BigInteger,
         nullable=True,
         comment="执行清理的用户ID"
     )
@@ -167,8 +164,8 @@ class SystemConfig(Base):
         comment="更新时间"
     )
     updated_by = Column(
-        UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="SET NULL"),
+        BigInteger,
+        ForeignKey("user.id"),
         nullable=True,
         comment="更新用户ID"
     )

@@ -33,24 +33,23 @@ class Document(Base):
     """
     文档元数据模型
 
-    对应数据库表: documents
+    对应数据库表: document
     """
 
-    __tablename__ = "documents"
+    __tablename__ = "document"
 
     # 主键
     id = Column(
-        UUID(as_uuid=True),
+        BigInteger,
         primary_key=True,
-        default=uuid.uuid4,
-        server_default=func.gen_random_uuid(),
+        autoincrement=True,
         comment="文档唯一标识"
     )
 
     # 用户关联（未来扩展）
     user_id = Column(
-        UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="SET NULL"),
+        BigInteger,
+        ForeignKey("user.id"),
         nullable=True,
         comment="上传用户ID"
     )
@@ -146,7 +145,7 @@ class Document(Base):
         nullable=True,
         comment="文档分类"
     )
-    tags = Column(
+    tag = Column(
         ARRAY(String),
         nullable=True,
         default=[],
@@ -193,7 +192,7 @@ class Document(Base):
     )
 
     # 关系
-    user = relationship("User", back_populates="documents", lazy="selectin")
+    user = relationship("User", back_populates="document", lazy="selectin")
     chunks = relationship("DocumentChunk", back_populates="document", cascade="all, delete-orphan", lazy="selectin")
     processing_history = relationship("DocumentProcessingHistory", back_populates="document", cascade="all, delete-orphan", lazy="selectin")
 
@@ -216,7 +215,7 @@ class Document(Base):
         Index("idx_documents_enabled", "enabled"),
         Index("idx_documents_created_at", "created_at"),
         Index("idx_documents_category", "category"),
-        Index("idx_documents_tags", "tags", postgresql_using="gin"),
+        Index("idx_document_tag", "tag", postgresql_using="gin"),
         {"comment": "文档元数据表"}
     )
 
@@ -258,7 +257,7 @@ class Document(Base):
             "total_tokens": self.total_tokens,
             "embedding_model": self.embedding_model,
             "category": self.category,
-            "tags": self.tags or [],
+            "tag": self.tag or [],
             "language": self.language,
             "source_type": self.source_type,
             "rebuild_id": self.rebuild_id,
@@ -292,17 +291,16 @@ class DocumentProcessingHistory(Base):
 
     # 主键
     id = Column(
-        UUID(as_uuid=True),
+        BigInteger,
         primary_key=True,
-        default=uuid.uuid4,
-        server_default=func.gen_random_uuid(),
+        autoincrement=True,
         comment="处理历史记录唯一标识"
     )
 
     # 外键关联
     document_id = Column(
-        UUID(as_uuid=True),
-        ForeignKey("documents.id", ondelete="CASCADE"),
+        BigInteger,
+        ForeignKey("document.id", ondelete="CASCADE"),
         nullable=False,
         comment="文档ID"
     )

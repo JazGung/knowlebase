@@ -3,10 +3,11 @@
  * 所有请求通过 Vite 代理转发到后端
  */
 
-const BASE_URL = ''
+const BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
 
 /**
  * 通用请求处理
+ * 后端统一返回 HTTP 200，通过 body.code 判断业务成功/失败
  */
 async function request(url, options = {}) {
   const res = await fetch(BASE_URL + url, {
@@ -24,7 +25,17 @@ async function request(url, options = {}) {
     throw error
   }
 
-  return res.json()
+  const data = await res.json()
+
+  // 检查业务错误码（后端统一返回 HTTP 200，业务错误通过 code 区分）
+  if (data.code !== 0) {
+    const error = new Error(data.message || `业务错误 code=${data.code}`)
+    error.code = data.code
+    error.detail = data.detail
+    throw error
+  }
+
+  return data
 }
 
 // ==================== 文档检查 ====================

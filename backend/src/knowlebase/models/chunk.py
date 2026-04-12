@@ -20,7 +20,7 @@ from sqlalchemy import (
     CheckConstraint,
     Index,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship, validates
 
@@ -31,25 +31,24 @@ class DocumentChunk(Base):
     """
     文档分块模型
 
-    对应数据库表: document_chunks
+    对应数据库表: document_chunk
     存储文档分块的元数据，实际内容存储在ElasticSearch中
     """
 
-    __tablename__ = "document_chunks"
+    __tablename__ = "document_chunk"
 
     # 主键
     id = Column(
-        UUID(as_uuid=True),
+        BigInteger,
         primary_key=True,
-        default=uuid.uuid4,
-        server_default=func.gen_random_uuid(),
+        autoincrement=True,
         comment="分块唯一标识"
     )
 
     # 外键关联
     document_id = Column(
-        UUID(as_uuid=True),
-        ForeignKey("documents.id", ondelete="CASCADE"),
+        BigInteger,
+        ForeignKey("document.id", ondelete="CASCADE"),
         nullable=False,
         comment="文档ID"
     )
@@ -106,8 +105,9 @@ class DocumentChunk(Base):
     )
 
     # 元数据
-    chunk_metadata = Column(
-        JSON,
+    meta = Column(
+        "metadata",
+        JSONB,
         nullable=False,
         default={},
         server_default="{}",
@@ -134,7 +134,7 @@ class DocumentChunk(Base):
         Index("idx_document_chunks_document_id", "document_id"),
         Index("idx_document_chunks_chunk_index", "chunk_index"),
         Index("idx_document_chunks_vector_id", "vector_id"),
-        Index("idx_document_chunks_metadata", "chunk_metadata", postgresql_using="gin"),
+        Index("idx_document_chunk_metadata", "metadata", postgresql_using="gin"),
         Index("idx_document_chunks_page_number", "page_number"),
         {"comment": "文档分块元数据表"}
     )
@@ -174,7 +174,7 @@ class DocumentChunk(Base):
             "section_title": self.section_title,
             "start_position": self.start_position,
             "end_position": self.end_position,
-            "metadata": self.chunk_metadata,
+            "metadata": self.meta,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 

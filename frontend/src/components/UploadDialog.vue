@@ -96,7 +96,7 @@ function handleConfirm() {
   emit('confirm', [...selectedFiles.value])
 }
 
-defineExpose({ open })
+defineExpose({ open, close: handleClose })
 </script>
 
 <style scoped>

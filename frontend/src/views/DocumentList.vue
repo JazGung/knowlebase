@@ -13,46 +13,52 @@
 
     <!-- 文档列表视图 -->
     <template v-else>
-      <!-- 工具栏 -->
-      <div style="margin-bottom: 16px; display: flex; gap: 8px; align-items: center;">
+      <!-- 工具栏（上） -->
+      <div style="margin-bottom: 8px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
         <el-button type="primary" @click="handleUpload">
           <el-icon><upload-filled /></el-icon>
           上传文档
         </el-button>
         <el-button
+          type="success"
           :disabled="selectedRows.length === 0"
           @click="handleBatchEnable(true)"
         >
           <el-icon><check /></el-icon>
-          启用
+          批量启用
         </el-button>
         <el-button
+          type="warning"
           :disabled="selectedRows.length === 0"
           @click="handleBatchEnable(false)"
         >
           <el-icon><close /></el-icon>
-          停用
+          批量停用
         </el-button>
         <el-button
+          type="info"
           :disabled="selectedRows.length !== 1"
           @click="handleReprocess"
         >
           <el-icon><refresh-right /></el-icon>
           重新处理
         </el-button>
+      </div>
 
-        <!-- 搜索 -->
+      <!-- 搜索栏（下） -->
+      <div style="margin-bottom: 16px; display: flex; justify-content: flex-end;">
         <el-input
           v-model="searchKeyword"
           placeholder="搜索文件名、标题..."
           clearable
-          style="width: 240px; margin-left: auto;"
+          style="width: 280px;"
           @clear="loadDocuments"
           @keyup.enter="loadDocuments"
         >
           <template #append>
             <el-button @click="loadDocuments">
               <el-icon><search /></el-icon>
+              搜索
             </el-button>
           </template>
         </el-input>
@@ -101,35 +107,37 @@
             {{ formatTime(row.created_at) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="200" align="center" fixed="right">
-          <template #default="{ row }">
-            <el-button type="primary" link size="small" @click="handleViewDetail(row.id)">
-              详情
-            </el-button>
-            <el-button
-              v-if="row.enabled"
-              type="warning"
-              link
-              size="small"
-              @click="handleToggleEnable(row, false)"
-            >
-              停用
-            </el-button>
-            <el-button
-              v-else
-              type="success"
-              link
-              size="small"
-              @click="handleToggleEnable(row, true)"
-            >
-              启用
-            </el-button>
-            <el-button type="info" link size="small" @click="handleReprocessSingle(row.id)">
-              重新处理
-            </el-button>
-          </template>
-        </el-table-column>
       </el-table>
+
+      <!-- 底部操作栏 -->
+      <div style="margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
+        <el-button size="small" @click="handleViewDetail(selectedRows[0].id)" :disabled="selectedRows.length !== 1">
+          <el-icon><view /></el-icon>
+          查看详情
+        </el-button>
+        <el-button
+          v-if="selectedRows.length === 1"
+          size="small"
+          :type="selectedRows[0].enabled ? 'warning' : 'success'"
+          @click="handleToggleEnable(selectedRows[0], !selectedRows[0].enabled)"
+        >
+          <el-icon v-if="selectedRows[0].enabled"><close /></el-icon>
+          <el-icon v-else><check /></el-icon>
+          {{ selectedRows[0].enabled ? '停用' : '启用' }}
+        </el-button>
+        <el-button
+          v-if="selectedRows.length === 1"
+          size="small"
+          type="info"
+          @click="handleReprocessSingle(selectedRows[0].id)"
+        >
+          <el-icon><refresh-right /></el-icon>
+          重新处理
+        </el-button>
+        <span v-if="selectedRows.length > 0" style="margin-left: auto; color: #909399; font-size: 12px;">
+          已选中 {{ selectedRows.length }} 项
+        </span>
+      </div>
 
       <!-- 分页 -->
       <div style="margin-top: 16px; display: flex; justify-content: flex-end;">
@@ -171,14 +179,14 @@
         </el-descriptions-item>
         <el-descriptions-item label="标签" :span="2">
           <el-tag
-            v-for="tag in (detailData.document?.tags || [])"
+            v-for="tag in (detailData.document?.tag || [])"
             :key="tag"
             size="small"
             style="margin-right: 4px;"
           >
             {{ tag }}
           </el-tag>
-          <span v-if="!detailData.document?.tags?.length" style="color: #909399;">-</span>
+          <span v-if="!detailData.document?.tag?.length" style="color: #909399;">-</span>
         </el-descriptions-item>
         <el-descriptions-item label="创建时间" :span="2">{{ formatTime(detailData.document?.created_at) }}</el-descriptions-item>
         <el-descriptions-item label="更新时间" :span="2">{{ formatTime(detailData.document?.updated_at) }}</el-descriptions-item>
@@ -219,7 +227,7 @@
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { UploadFilled, Check, Close, RefreshRight, Search } from '@element-plus/icons-vue'
+import { UploadFilled, Check, Close, RefreshRight, Search, View } from '@element-plus/icons-vue'
 import UploadResults from '../components/UploadResults.vue'
 import UploadDialog from '../components/UploadDialog.vue'
 import {
@@ -298,11 +306,34 @@ function handleUploadConfirm(files) {
 function handleUploadBack() {
   viewMode.value = 'list'
   uploadFiles.value = []
+  uploadDialogRef.value?.handleClose?.()
   loadDocuments()
 }
 
-// 启用/停用
+// 启用/停用单个文档（带前端状态校验）
 async function handleToggleEnable(row, enable) {
+  // 前端校验：优先检查状态
+  if (enable && row.enabled) {
+    ElMessage.warning('该文档已启用，无需重复操作')
+    return
+  }
+  if (!enable && !row.enabled) {
+    ElMessage.warning('该文档已停用，无需重复操作')
+    return
+  }
+
+  // 操作确认（在校验通过之后）
+  try {
+    await ElMessageBox.confirm(
+      `确定要${enable ? '启用' : '停用'}文档「${row.original_filename}」吗？`,
+      '确认操作',
+      { type: enable ? 'success' : 'warning' }
+    )
+  } catch {
+    return // 用户取消
+  }
+
+  // 执行操作
   try {
     if (enable) {
       await enableDocument(row.id)
@@ -318,30 +349,58 @@ async function handleToggleEnable(row, enable) {
 }
 
 async function handleBatchEnable(enable) {
+  // 前端校验
+  if (selectedRows.value.length === 0) {
+    ElMessage.warning('请先选择要操作的文档')
+    return
+  }
+
+  // 过滤出状态需要变更的文档
+  const rowsToProcess = selectedRows.value.filter(row => row.enabled !== enable)
+  if (rowsToProcess.length === 0) {
+    ElMessage.warning(`所选文档均已${enable ? '启用' : '停用'}，无需重复操作`)
+    return
+  }
+
   try {
     await ElMessageBox.confirm(
-      `确定要${enable ? '启用' : '停用'}选中的 ${selectedRows.value.length} 个文档吗？`,
+      `确定要${enable ? '启用' : '停用'}选中的 ${rowsToProcess.length} 个文档吗？`,
       '确认操作',
       { type: 'warning' }
     )
-    for (const row of selectedRows.value) {
+    for (const row of rowsToProcess) {
       if (enable) {
         await enableDocument(row.id)
       } else {
         await disableDocument(row.id)
       }
     }
-    ElMessage.success(`已${enable ? '启用' : '停用'} ${selectedRows.value.length} 个文档`)
+    ElMessage.success(`已${enable ? '启用' : '停用'} ${rowsToProcess.length} 个文档`)
     loadDocuments()
   } catch {
     // 取消
   }
 }
 
-// 重新处理
+// 重新处理（带前端状态校验）
 async function handleReprocessSingle(documentId) {
+  // 前端校验：查找对应行数据
+  const row = documents.value.find(d => d.id === documentId)
+  if (!row) {
+    ElMessage.warning('未找到该文档')
+    return
+  }
+  if (row.status === 'processing') {
+    ElMessage.warning('该文档正在处理中，请稍后再试')
+    return
+  }
+  if (row.status === 'deleted') {
+    ElMessage.warning('已删除的文档不能重新处理')
+    return
+  }
+
   try {
-    await ElMessageBox.confirm('确定要重新处理该文档吗？', '确认操作', { type: 'warning' })
+    await ElMessageBox.confirm(`确定要重新处理文档「${row.original_filename}」吗？`, '确认操作', { type: 'warning' })
     const result = await reprocessDocument(documentId, false)
     ElMessage.success(`已发起重新处理，任务ID: ${result.data?.processing_id || '未知'}`)
     loadDocuments()

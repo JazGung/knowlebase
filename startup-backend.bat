@@ -1,3 +1,7 @@
+set "BAT_ROOT_DIR=E:\script\bat"
+
+set "ROOT_DIR=%~dp0"
+
 CALL %BAT_ROOT_DIR%\pythonconf.bat
 
 CD backend

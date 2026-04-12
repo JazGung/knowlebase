@@ -6,14 +6,27 @@ services:
       dockerfile: Dockerfile.dev
     container_name: knowlebase-backend
     environment:
-      # 数据库连接
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-knowlebase}:${POSTGRES_PASSWORD:-knowlebase_password}@postgres:5432/${POSTGRES_DB:-knowlebase}
-      - ELASTICSEARCH_URL=http://elasticsearch:9200
+      # 数据库连接（配置类使用独立变量构建）
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-knowlebase}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-knowlebase_password}
+      - POSTGRES_DB=${POSTGRES_DB:-knowlebase}
+      # ElasticSearch
+      - ELASTICSEARCH_HOST=elasticsearch
+      - ELASTICSEARCH_PORT=9200
+      # Milvus
       - MILVUS_HOST=milvus
       - MILVUS_PORT=19530
-      - NEO4J_URL=bolt://neo4j:7687
+      # Neo4j
+      - NEO4J_HOST=neo4j
+      - NEO4J_PORT=7687
       - NEO4J_USER=${NEO4J_USER:-neo4j}
       - NEO4J_PASSWORD=${NEO4J_PASSWORD:-knowlebase_password}
+      # MinIO
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
       # 应用程序配置（从.env读取）
       - DEBUG=${DEBUG:-true}
       - SECRET_KEY=${SECRET_KEY:-your-secret-key-change-in-production}
@@ -25,6 +38,8 @@ services:
       - SEARCH_KEYWORD_WEIGHT=${SEARCH_KEYWORD_WEIGHT:-0.4}
       - SEARCH_SEMANTIC_WEIGHT=${SEARCH_SEMANTIC_WEIGHT:-0.4}
       - SEARCH_GRAPH_WEIGHT=${SEARCH_GRAPH_WEIGHT:-0.2}
+      - DOCKER_CONTAINER=true
+      - TZ=Asia/Shanghai
     volumes:
       - ./backend:/app
     ports:

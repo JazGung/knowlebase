@@ -1,3 +1,13 @@
+# ============================================================
+# 中间件服务配置
+# ============================================================
+# 数据持久化策略：
+# - 默认使用 bind mount 映射到 ../knowlebase-volume 目录
+# - 自定义: 在 .env 中修改 VOLUME_BASE 变量
+# - Neo4j 使用 Docker named volume（Windows 下 bind mount 会触发
+#   chown -R 导致启动卡死，这是 Docker Desktop 的已知限制）
+# ============================================================
+
 services:
   # 关系数据库：存储用户信息、文档元数据、系统配置等结构化数据
   postgres:
@@ -7,8 +17,9 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-knowlebase}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-knowlebase_password}
       POSTGRES_DB: ${POSTGRES_DB:-knowlebase}
+      TZ: Asia/Shanghai
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - ${VOLUME_BASE:-../knowlebase-volume}/postgres_data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
     healthcheck:
@@ -28,15 +39,16 @@ services:
       - xpack.security.enabled=false
       - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
       - cluster.name=knowlebase-cluster
+      - TZ=Asia/Shanghai
     volumes:
-      - elasticsearch_data:/usr/share/elasticsearch/data
+      - ${VOLUME_BASE:-../knowlebase-volume}/elasticsearch_data:/usr/share/elasticsearch/data
       - ./config/elasticsearch/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml
       - ./config/elasticsearch/plugins:/usr/share/elasticsearch/plugins
     ports:
       - "9200:9200"
       - "9300:9300"
     healthcheck:
-      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -q '\"status\":\"green\"' || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health | grep -q '\"status\"\\s*:\\s*\"green\"' || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -51,8 +63,9 @@ services:
     environment:
       - ETCD_ENDPOINTS=etcd:2379
       - MINIO_ADDRESS=minio:9000
+      - TZ=Asia/Shanghai
     volumes:
-      - milvus_data:/var/lib/milvus
+      - ${VOLUME_BASE:-../knowlebase-volume}/milvus_data:/var/lib/milvus
     ports:
       - "19530:19530"
       - "9091:9091"
@@ -76,8 +89,9 @@ services:
       - ETCD_AUTO_COMPACTION_RETENTION=1000
       - ETCD_QUOTA_BACKEND_BYTES=4294967296
       - ETCD_SNAPSHOT_COUNT=50000
+      - TZ=Asia/Shanghai
     volumes:
-      - etcd_data:/etcd
+      - ${VOLUME_BASE:-../knowlebase-volume}/etcd_data:/etcd
     command: etcd -advertise-client-urls=http://etcd:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
     networks:
       - knowlebase-network
@@ -91,8 +105,9 @@ services:
       - MINIO_SECRET_KEY=minioadmin
       - MINIO_ROOT_USER=minioadmin
       - MINIO_ROOT_PASSWORD=minioadmin
+      - TZ=Asia/Shanghai
     volumes:
-      - minio_data:/data
+      - ${VOLUME_BASE:-../knowlebase-volume}/minio_data:/data
     command: minio server /data --console-address ":9090"
     ports:
       - "9000:9000"
@@ -106,6 +121,8 @@ services:
       - knowlebase-network
 
   # 图数据库：知识图谱、实体关系存储
+  # 注意：Windows 下必须使用 named volume，因为 Neo4j 入口脚本会
+  # 执行 chown -R neo4j:neo4j /var/lib/neo4j，对 bind mount 极其缓慢
   neo4j:
     image: neo4j:5.15.0
     container_name: knowlebase-neo4j
@@ -113,77 +130,27 @@ services:
       - NEO4J_AUTH=${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-knowlebase_password}
       - NEO4J_PLUGINS=["apoc", "graph-data-science"]
       - NEO4J_ACCEPT_LICENSE_AGREEMENT=yes
+      - TZ=Asia/Shanghai
     volumes:
+      # 使用 Docker named volume（内部 Linux 文件系统，chown 瞬间完成）
       - neo4j_data:/data
-      - neo4j_logs:/logs
-      - neo4j_import:/var/lib/neo4j/import
-      - neo4j_plugins:/plugins
+      # logs、import、plugins 不做持久化，容器重启时插件会自动重新下载
     ports:
       - "7474:7474"
       - "7687:7687"
     healthcheck:
-      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "knowlebase_password", "RETURN 1"]
-      interval: 30s
+      # 使用 wget 检查 HTTP 端口，比 cypher-shell（JVM 启动）快得多
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 || exit 1"]
+      interval: 15s
       timeout: 10s
-      retries: 5
+      retries: 10
+      start_period: 120s
     networks:
       - knowlebase-network
 
 volumes:
-  postgres_data:
-    driver: local
-    driver_opts:
-      type: 'none'
-      o: 'bind'
-      device: /E/project/knowlebase-volume/postgres_data
-  elasticsearch_data:
-    driver: local
-    driver_opts:
-      type: 'none'
-      o: 'bind'
-      device: /E/project/knowlebase-volume/elasticsearch_data
-  milvus_data:
-    driver: local
-    driver_opts:
-      type: 'none'
-      o: 'bind'
-      device: /E/project/knowlebase-volume/milvus_data
-  etcd_data:
-    driver: local
-    driver_opts:
-      type: 'none'
-      o: 'bind'
-      device: /E/project/knowlebase-volume/etcd_data
-  minio_data:
-    driver: local
-    driver_opts:
-      type: 'none'
-      o: 'bind'
-      device: /E/project/knowlebase-volume/minio_data
   neo4j_data:
     driver: local
-    driver_opts:
-      type: 'none'
-      o: 'bind'
-      device: /E/project/knowlebase-volume/neo4j_data
-  neo4j_logs:
-    driver: local
-    driver_opts:
-      type: 'none'
-      o: 'bind'
-      device: /E/project/knowlebase-volume/neo4j_logs
-  neo4j_import:
-    driver: local
-    driver_opts:
-      type: 'none'
-      o: 'bind'
-      device: /E/project/knowlebase-volume/neo4j_import
-  neo4j_plugins:
-    driver: local
-    driver_opts:
-      type: 'none'
-      o: 'bind'
-      device: /E/project/knowlebase-volume/neo4j_plugins
 
 networks:
   knowlebase-network:

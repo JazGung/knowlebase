@@ -169,7 +169,7 @@ class UploadService:
                     {
                         "filename": filename,
                         "hash": file_hash.lower(),
-                        "existing_document_id": existing_doc.id,
+                        "existing_document_id": str(existing_doc.id),
                         "existing_filename": existing_doc.original_filename,
                     }
                 )
@@ -234,8 +234,8 @@ class UploadService:
 
         if existing_doc:
             return {
-                "document_id": existing_doc.id,
-                "filename": existing_doc.filename,
+                "document_id": str(existing_doc.id),
+                "filename": existing_doc.file_hash,
                 "original_filename": existing_doc.original_filename,
                 "file_hash": existing_doc.file_hash,
                 "file_size": existing_doc.file_size,
@@ -268,9 +268,9 @@ class UploadService:
             是否成功删除
         """
         try:
-            exists = self.minio_service.file_exists(file_hash)
+            exists = self.minio_service.file_exists(settings.minio_document_bucket, file_hash)
             if exists:
-                deleted = self.minio_service.delete_file(file_hash)
+                deleted = self.minio_service.delete_file(settings.minio_document_bucket, file_hash)
                 if deleted:
                     logger.info(f"清理孤立文件成功: {file_hash}")
                     return True
@@ -314,12 +314,13 @@ class UploadService:
         minio_filename = file_hash
 
         # 保存文件到Minio
+        # 注意：MinIO metadata 是 HTTP headers，仅支持 ASCII，中文文件名存 PostgreSQL
         minio_result = self.minio_service.upload_file(
+            bucket_name=settings.minio_document_bucket,
+            object_name=minio_filename,
             file_data=content,
-            filename=minio_filename,
             content_type="application/octet-stream",
             metadata={
-                "original_filename": original_filename,
                 "file_hash": file_hash,
                 "file_size": str(file_size),
                 "upload_time": datetime.now().isoformat(),
@@ -332,8 +333,7 @@ class UploadService:
                 detail={"code": 500, "message": "文件存储失败", "detail": "无法将文件保存到存储系统"},
             )
 
-        # 生成文档ID和处理ID
-        document_id = f"doc_{int(time.time())}_{uuid.uuid4().hex[:8]}"
+        # 生成处理ID
         processing_id = f"proc_{uuid.uuid4().hex[:12]}"
 
         # 处理tags
@@ -346,35 +346,34 @@ class UploadService:
                 if tag.strip()
             ]
 
-        # 创建文档记录
+        # 创建文档记录（id 自增长）
         doc = Document(
-            id=document_id,
-            filename=minio_filename,
             original_filename=original_filename,
-            title=metadata.get("title"),
+            title=metadata.get("title") or original_filename,
             description=metadata.get("description"),
             category=metadata.get("category"),
-            tags=tags_list,
+            tag=tags_list,
             mime_type="application/octet-stream",
             file_size=file_size,
             file_hash=file_hash,
-            created_by=user_id,
             enabled=True,
-        )
-
-        # 创建处理记录
-        proc = DocumentProcessingHistory(
-            id=processing_id,
-            document_id=document_id,
-            processing_number=1,
-            status=DocumentStatus.PENDING,
-            current_stage="uploading",
-            progress=0,
-            started_at=datetime.now(),
         )
 
         try:
             db.add(doc)
+            await db.flush()  # 刷新以获取 doc 的自增 ID
+
+            # 创建处理记录（需要 doc.id）
+            proc = DocumentProcessingHistory(
+                document_id=doc.id,
+                processing_id=processing_id,
+                processing_number=1,
+                status=DocumentStatus.PENDING,
+                current_stage="uploading",
+                progress=0,
+                started_at=datetime.now(),
+            )
+
             db.add(proc)
             await db.commit()
             await db.refresh(doc)
@@ -385,7 +384,7 @@ class UploadService:
             progress_stream_url = f"/build/progress/stream?processing_id={processing_id}"
 
             return {
-                "document_id": document_id,
+                "document_id": str(doc.id),
                 "filename": minio_filename,
                 "original_filename": original_filename,
                 "file_hash": file_hash,
@@ -489,18 +488,18 @@ class DocumentService:
             doc_list.append(
                 {
                     "id": doc.id,
-                    "filename": doc.filename,
+                    "filename": doc.file_hash,
                     "original_filename": doc.original_filename,
                     "title": doc.title,
                     "description": doc.description,
                     "category": doc.category,
-                    "tags": doc.tags or [],
+                    "tag": doc.tag or [],
                     "file_size": doc.file_size,
                     "mime_type": doc.mime_type,
                     "file_hash": doc.file_hash,
                     "enabled": doc.enabled,
                     "status": doc.status,
-                    "created_by": doc.created_by,
+                    "created_by": None,
                     "created_at": doc.created_at.isoformat() if doc.created_at else None,
                     "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
                 }
@@ -547,14 +546,14 @@ class DocumentService:
                 "completed_at": proc.completed_at.isoformat() if proc.completed_at else None,
                 "error_message": proc.error_message,
                 "result": proc.result or {},
-                "stages": proc.stages or [],
+                "stage": proc.stage or [],
             }
             processing_history.append(proc_dict)
 
         return {
             "document": {
                 "id": doc.id,
-                "filename": doc.filename,
+                "filename": doc.file_hash,
                 "original_filename": doc.original_filename,
                 "title": doc.title,
                 "description": doc.description,
@@ -582,6 +581,11 @@ class DocumentService:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail={"code": 404, "message": "文档不存在", "detail": f"文档ID: {document_id}"},
             )
+        if doc.enabled:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": 400, "message": "文档已启用，无需重复操作"},
+            )
         doc.enabled = True
         doc.updated_at = datetime.now()
         await db.commit()
@@ -593,6 +597,11 @@ class DocumentService:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail={"code": 404, "message": "文档不存在", "detail": f"文档ID: {document_id}"},
+            )
+        if not doc.enabled:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": 400, "message": "文档已停用，无需重复操作"},
             )
         doc.enabled = False
         doc.updated_at = datetime.now()
@@ -608,6 +617,16 @@ class DocumentService:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail={"code": 404, "message": "文档不存在", "detail": f"文档ID: {document_id}"},
             )
+        if doc.status == "processing":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": 400, "message": "文档正在处理中，请稍后再试"},
+            )
+        if doc.status == "deleted":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": 400, "message": "已删除的文档不能重新处理"},
+            )
 
         # 查询最大处理次数
         max_query = select(func.coalesce(func.max(DocumentProcessingHistory.processing_number), 0)).where(
@@ -620,8 +639,8 @@ class DocumentService:
         processing_id = f"proc_{uuid.uuid4().hex[:12]}"
 
         proc = DocumentProcessingHistory(
-            id=processing_id,
             document_id=document_id,
+            processing_id=processing_id,
             processing_number=new_processing_number,
             status=DocumentStatus.PENDING,
             current_stage="uploading",

@@ -19,5 +19,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 复制应用代码
 COPY . .
 
+# 设置Python路径
+ENV PYTHONPATH=/app/src
+
 # 开发模式启动命令
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+CMD ["uvicorn", "knowlebase.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "src"]

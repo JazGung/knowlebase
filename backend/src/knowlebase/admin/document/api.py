@@ -7,7 +7,8 @@
 import logging
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, Form, File, Query, status
+from fastapi import APIRouter, Depends, UploadFile, File, Form, Query, status
+from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from knowlebase.db.session import get_db
@@ -50,37 +51,25 @@ async def check_file_duplicates(
     db: AsyncSession = Depends(get_db),
     upload_service: UploadService = Depends(get_upload_service)
 ):
-    """
-    重复性校验接口
-
-    检查文件是否已存在于系统中
-    """
     try:
         logger.info(f"重复性校验请求: {len(request.files)} 个文件")
 
-        # 批量检查重复文件
         duplicate_files = await upload_service.batch_check_duplicates(
             db,
             [{"filename": item.filename, "hash": item.hash} for item in request.files]
         )
 
-        response_data = {"duplicate_files": duplicate_files}
-
         return FileCheckSuccessResponse(
             code=0,
             message="重复性校验完成",
-            data=response_data
+            data={"duplicate_files": duplicate_files}
         )
 
     except Exception as e:
-        logger.error(f"重复性校验失败: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={
-                "code": 500,
-                "message": "重复性校验失败",
-                "detail": str(e)
-            }
+        logger.error(f"重复性校验失败: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=200,
+            content={"code": 500, "message": "重复性校验失败", "detail": str(e)}
         )
 
 
@@ -105,34 +94,25 @@ async def upload_document(
     db: AsyncSession = Depends(get_db),
     upload_service: UploadService = Depends(get_upload_service)
 ):
-    """
-    单文件上传接口
-
-    上传单个文件到系统，包含完整性验证和重复性检查
-    """
     try:
         logger.info(f"文件上传请求: {file.filename}, hash: {hash}")
 
-        # 准备元数据
         metadata = {
             "title": title,
             "description": description,
             "category": category,
-            "tags": tags
+            "tag": tags
         }
 
-        # 处理文件上传
         upload_result = await upload_service.process_upload(
             db=db,
             file=file,
             provided_hash=hash,
             metadata=metadata,
-            user_id=None  # 暂时没有用户系统，后续添加
+            user_id=None
         )
 
-        # 检查是否为重复文件
         if upload_result.get("duplicate", False):
-            # 重复文件，返回特殊响应
             return DocumentUploadSuccessResponse(
                 code=0,
                 message="文件已存在",
@@ -149,7 +129,6 @@ async def upload_document(
                 }
             )
 
-        # 成功上传
         return DocumentUploadSuccessResponse(
             code=0,
             message="文档上传成功",
@@ -166,18 +145,11 @@ async def upload_document(
             }
         )
 
-    except HTTPException as e:
-        # 重新抛出HTTP异常
-        raise e
     except Exception as e:
-        logger.error(f"文件上传失败: {file.filename} - {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={
-                "code": 500,
-                "message": "文件上传失败",
-                "detail": str(e)
-            }
+        logger.error(f"文件上传失败: {file.filename} - {e}", exc_info=True)
+        return JSONResponse(
+            status_code=200,
+            content={"code": 500, "message": "文件上传失败", "detail": str(e)}
         )
 
 
@@ -191,7 +163,7 @@ async def upload_document(
 async def get_document_list(
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(20, ge=1, le=100, description="每页数量"),
-    status: Optional[str] = Query(None, description="状态过滤"),
+    status_filter: Optional[str] = Query(None, alias="status", description="状态过滤"),
     enabled: Optional[bool] = Query(None, description="是否启用过滤"),
     category: Optional[str] = Query(None, description="分类过滤"),
     search: Optional[str] = Query(None, description="关键字搜索"),
@@ -200,15 +172,11 @@ async def get_document_list(
     db: AsyncSession = Depends(get_db),
     document_service: DocumentService = Depends(get_document_service)
 ):
-    """
-    文档列表查询接口
-    """
     try:
-        # 构建查询参数
         query_params = DocumentListQuery(
             page=page,
             page_size=page_size,
-            status=status,
+            status=status_filter,
             enabled=enabled,
             category=category,
             search=search,
@@ -216,7 +184,6 @@ async def get_document_list(
             order=order
         )
 
-        # 查询文档列表
         result = await document_service.get_document_list(db, query_params)
 
         return SuccessResponse(
@@ -226,14 +193,10 @@ async def get_document_list(
         )
 
     except Exception as e:
-        logger.error(f"文档列表查询失败: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={
-                "code": 500,
-                "message": "文档列表查询失败",
-                "detail": str(e)
-            }
+        logger.error(f"文档列表查询失败: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=200,
+            content={"code": 500, "message": "文档列表查询失败", "detail": str(e)}
         )
 
 
@@ -249,21 +212,13 @@ async def get_document_detail(
     db: AsyncSession = Depends(get_db),
     document_service: DocumentService = Depends(get_document_service)
 ):
-    """
-    文档详情查询接口
-    """
     try:
-        # 查询文档详情
         result = await document_service.get_document_detail(db, document_id)
 
         if not result:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail={
-                    "code": 404,
-                    "message": "文档不存在",
-                    "detail": f"文档ID: {document_id}"
-                }
+            return JSONResponse(
+                status_code=200,
+                content={"code": 404, "message": "文档不存在", "detail": f"文档ID: {document_id}"}
             )
 
         return DocumentDetailSuccessResponse(
@@ -272,17 +227,11 @@ async def get_document_detail(
             data=result
         )
 
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.error(f"文档详情查询失败: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={
-                "code": 500,
-                "message": "文档详情查询失败",
-                "detail": str(e)
-            }
+        logger.error(f"文档详情查询失败: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=200,
+            content={"code": 500, "message": "文档详情查询失败", "detail": str(e)}
         )
 
 
@@ -298,9 +247,6 @@ async def enable_document(
     db: AsyncSession = Depends(get_db),
     document_service: DocumentService = Depends(get_document_service)
 ):
-    """
-    启用文档接口
-    """
     try:
         await document_service.enable_document(db, request.document_id)
 
@@ -310,17 +256,11 @@ async def enable_document(
             data={"document_id": request.document_id}
         )
 
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.error(f"文档启用失败: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={
-                "code": 500,
-                "message": "文档启用失败",
-                "detail": str(e)
-            }
+        logger.error(f"文档启用失败: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=200,
+            content={"code": 500, "message": "文档启用失败", "detail": str(e)}
         )
 
 
@@ -336,9 +276,6 @@ async def disable_document(
     db: AsyncSession = Depends(get_db),
     document_service: DocumentService = Depends(get_document_service)
 ):
-    """
-    停用文档接口
-    """
     try:
         await document_service.disable_document(db, request.document_id)
 
@@ -348,17 +285,11 @@ async def disable_document(
             data={"document_id": request.document_id}
         )
 
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.error(f"文档停用失败: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={
-                "code": 500,
-                "message": "文档停用失败",
-                "detail": str(e)
-            }
+        logger.error(f"文档停用失败: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=200,
+            content={"code": 500, "message": "文档停用失败", "detail": str(e)}
         )
 
 
@@ -374,9 +305,6 @@ async def reprocess_document(
     db: AsyncSession = Depends(get_db),
     document_service: DocumentService = Depends(get_document_service)
 ):
-    """
-    重新处理文档接口
-    """
     try:
         result = await document_service.reprocess_document(
             db,
@@ -390,42 +318,9 @@ async def reprocess_document(
             data=result
         )
 
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.error(f"文档重新处理失败: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={
-                "code": 500,
-                "message": "文档重新处理失败",
-                "detail": str(e)
-            }
+        logger.error(f"文档重新处理失败: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=200,
+            content={"code": 500, "message": "文档重新处理失败", "detail": str(e)}
         )
-
-
-# 错误处理
-@router.get(
-    "/test/error",
-    summary="测试错误响应",
-    description="用于测试错误响应格式",
-    tags=["测试"],
-    include_in_schema=False  # 不在OpenAPI文档中显示
-)
-async def test_error_response():
-    """
-    测试错误响应格式
-    """
-    raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail={
-            "code": 400,
-            "message": "测试错误消息",
-            "detail": {
-                "field": "test_field",
-                "error": "测试错误详情",
-                "expected": "expected_value",
-                "actual": "actual_value"
-            }
-        }
-    )

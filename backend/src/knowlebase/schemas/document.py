@@ -255,7 +255,7 @@ class DocumentDetail(BaseModel):
     title: Optional[str] = Field(None, description="文档标题")
     description: Optional[str] = Field(None, description="文档描述")
     category: Optional[str] = Field(None, description="文档分类")
-    tags: Optional[List[str]] = Field(None, description="文档标签列表")
+    tag: Optional[List[str]] = Field(None, description="文档标签列表")
     file_size: Optional[int] = Field(None, description="文件大小（字节）")
     mime_type: Optional[str] = Field(None, description="文件MIME类型")
     file_hash: str = Field(..., description="文件MD5哈希值")
@@ -291,7 +291,7 @@ class ProcessingHistoryItem(BaseModel):
     completed_at: Optional[datetime] = Field(None, description="完成时间")
     error_message: Optional[str] = Field(None, description="错误信息")
     result: Optional[Dict[str, Any]] = Field(None, description="处理结果")
-    stages: Optional[List[ProcessingStage]] = Field(None, description="处理阶段列表")
+    stage: Optional[List[ProcessingStage]] = Field(None, description="处理阶段列表")
 
 
 class DocumentDetailResponse(BaseModel):

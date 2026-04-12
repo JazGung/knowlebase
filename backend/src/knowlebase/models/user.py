@@ -15,6 +15,7 @@ from sqlalchemy import (
     Text,
     JSON,
     Integer,
+    BigInteger,
     TIMESTAMP,
     ForeignKey,
     UniqueConstraint,
@@ -36,14 +37,13 @@ class User(Base):
     存储用户信息和权限
     """
 
-    __tablename__ = "users"
+    __tablename__ = "user"
 
     # 主键
     id = Column(
-        UUID(as_uuid=True),
+        BigInteger,
         primary_key=True,
-        default=uuid.uuid4,
-        server_default=func.gen_random_uuid(),
+        autoincrement=True,
         comment="用户唯一标识"
     )
 
@@ -101,7 +101,7 @@ class User(Base):
     )
 
     # 关系
-    documents = relationship("Document", back_populates="user", cascade="all, delete-orphan", lazy="selectin")
+    document = relationship("Document", back_populates="user", cascade="all, delete-orphan", lazy="selectin")
     search_history = relationship("SearchHistory", back_populates="user", cascade="all, delete-orphan", lazy="selectin")
 
     # 约束
@@ -173,17 +173,16 @@ class SearchHistory(Base):
 
     # 主键
     id = Column(
-        UUID(as_uuid=True),
+        BigInteger,
         primary_key=True,
-        default=uuid.uuid4,
-        server_default=func.gen_random_uuid(),
+        autoincrement=True,
         comment="搜索历史唯一标识"
     )
 
     # 外键关联
     user_id = Column(
-        UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="SET NULL"),
+        BigInteger,
+        ForeignKey("user.id"),
         nullable=True,
         comment="用户ID"
     )
