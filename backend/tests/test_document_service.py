@@ -317,3 +317,43 @@ class TestReprocessDocument:
         with pytest.raises(HTTPException) as exc_info:
             await service.reprocess_document(mock_db, "doc_nonexistent")
         assert exc_info.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_reprocess_integer_id_returns_string(self, service):
+        """service 接收整数 document_id 时，返回的 document_id 必须是字符串"""
+        mock_db = AsyncMock()
+        doc = make_mock_document()
+        doc.id = 18  # 模拟数据库自增 ID
+        mock_db.get = AsyncMock(return_value=doc)
+
+        max_result = AsyncMock()
+        max_result.scalar_one = MagicMock(return_value=0)
+        mock_db.execute = AsyncMock(return_value=max_result)
+        mock_db.commit = AsyncMock()
+        mock_db.refresh = AsyncMock()
+
+        result = await service.reprocess_document(mock_db, 18)
+        assert isinstance(result["document_id"], str), f"document_id 应为 str, 实际是 {type(result['document_id']).__name__}"
+        assert result["document_id"] == "18"
+
+    @pytest.mark.asyncio
+    async def test_reprocess_processing_document(self, service):
+        """文档正在处理中时抛出 HTTPException"""
+        mock_db = AsyncMock()
+        doc = make_mock_document(overrides={"status": "processing"})
+        mock_db.get = AsyncMock(return_value=doc)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await service.reprocess_document(mock_db, 5)
+        assert exc_info.value.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_reprocess_deleted_document(self, service):
+        """已删除文档抛出 HTTPException"""
+        mock_db = AsyncMock()
+        doc = make_mock_document(overrides={"status": "deleted"})
+        mock_db.get = AsyncMock(return_value=doc)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await service.reprocess_document(mock_db, 5)
+        assert exc_info.value.status_code == 400

@@ -379,7 +379,14 @@ class UploadService:
             await db.refresh(doc)
             await db.refresh(proc)
 
-            # TODO: 触发异步处理任务
+            # 触发文档处理任务（后台异步执行）
+            import asyncio
+            from knowlebase.admin.processing.service import get_processing_service
+
+            processing_svc = get_processing_service()
+            asyncio.create_task(
+                processing_svc.process_document(db, doc.id, processing_id)
+            )
 
             progress_stream_url = f"/build/progress/stream?processing_id={processing_id}"
 
@@ -611,6 +618,8 @@ class DocumentService:
         self, db: AsyncSession, document_id: str, force_reprocess: bool = False
     ) -> Dict:
         """重新处理文档"""
+        logger.info(f"创建重新处理记录: document_id={document_id}")
+
         doc = await db.get(Document, document_id)
         if not doc:
             raise HTTPException(
@@ -652,8 +661,17 @@ class DocumentService:
         await db.commit()
         await db.refresh(proc)
 
+        # 触发文档处理任务（后台异步执行）
+        import asyncio
+        from knowlebase.admin.processing.service import get_processing_service
+
+        processing_svc = get_processing_service()
+        asyncio.create_task(
+            processing_svc.process_document(db, doc.id, processing_id)
+        )
+
         return {
-            "document_id": document_id,
+            "document_id": str(document_id),
             "processing_id": processing_id,
             "processing_number": new_processing_number,
             "progress_stream_url": f"/build/progress/stream?processing_id={processing_id}",

@@ -74,8 +74,4 @@ tmp/
 Thumbs.db
 CLAUDE.md
 .gitmodules
-.claude/settings.local.json
-.claude/settings.local.json
-.claude/settings.local.json
-.claude/settings.local.json
-.gitignore
+.claude/

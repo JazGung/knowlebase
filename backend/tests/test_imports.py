@@ -28,6 +28,11 @@ def test_imports():
         ("knowlebase.admin.document.api", "router"),
         ("knowlebase.admin", "build_router"),
         ("knowlebase.main", "app"),
+        ("knowlebase.parsers", "parse_document"),
+        ("knowlebase.parsers.base", "ParseResult"),
+        ("knowlebase.parsers.pdf_parser", "PDFParser"),
+        ("knowlebase.parsers.docx_parser", "DOCXParser"),
+        ("knowlebase.admin.processing.service", "ProcessingService"),
     ]
 
     print("开始测试模块导入...")

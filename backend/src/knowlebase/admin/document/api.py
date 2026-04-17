@@ -7,7 +7,7 @@
 import logging
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, UploadFile, File, Form, Query, status
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -306,10 +306,18 @@ async def reprocess_document(
     document_service: DocumentService = Depends(get_document_service)
 ):
     try:
+        logger.info(f"重新处理文档请求: document_id={request.document_id}, force={request.force_reprocess}")
+
         result = await document_service.reprocess_document(
             db,
             request.document_id,
             request.force_reprocess
+        )
+
+        logger.info(
+            f"文档重新处理已发起: document_id={result['document_id']}, "
+            f"processing_id={result['processing_id']}, "
+            f"processing_number={result['processing_number']}"
         )
 
         return ReprocessDocumentSuccessResponse(
@@ -317,6 +325,9 @@ async def reprocess_document(
             message="文档重新处理已发起",
             data=result
         )
+
+    except HTTPException:
+        raise
 
     except Exception as e:
         logger.error(f"文档重新处理失败: {e}", exc_info=True)

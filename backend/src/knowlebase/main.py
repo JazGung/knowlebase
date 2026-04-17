@@ -24,6 +24,7 @@ from knowlebase.admin import build_router
 logging.basicConfig(
     level=logging.DEBUG if settings.debug else logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    stream=__import__("sys").stdout,  # 打印到控制台（stdout）
 )
 logger = logging.getLogger(__name__)
 

@@ -404,8 +404,11 @@ async function handleReprocessSingle(documentId) {
     const result = await reprocessDocument(documentId, false)
     ElMessage.success(`已发起重新处理，任务ID: ${result.data?.processing_id || '未知'}`)
     loadDocuments()
-  } catch {
-    // 取消
+  } catch (err) {
+    if (err?.name === 'Cancel') {
+      return
+    }
+    ElMessage.error(`重新处理失败：${err?.message || '未知错误'}`)
   }
 }
 

@@ -314,7 +314,7 @@ class ReprocessDocumentRequest(BaseModel):
     """
     重新处理文档请求模型
     """
-    document_id: str = Field(..., description="文档ID")
+    document_id: int = Field(..., description="文档ID")
     force_reprocess: bool = Field(default=False, description="是否强制重新处理")
 
 

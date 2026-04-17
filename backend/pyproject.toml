@@ -3,6 +3,10 @@ name = "knowlebase"
 version = "1.0.0"
 description = "企业内部知识库文档管理和智能检索系统"
 requires-python = ">=3.10"
+dependencies = [
+    "python-docx>=1.1.0",
+    "pdfplumber>=0.11.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
