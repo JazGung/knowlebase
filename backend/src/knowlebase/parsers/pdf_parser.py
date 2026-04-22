@@ -1,19 +1,21 @@
 """PDF 文档解析器
 
-使用 pdfplumber 提取纯文本。
+使用 pdfplumber 提取纯文本，PyMuPDF 提取图片。
 按页面提取文本，通过 y 坐标识别段落边界，保留 page_number 信息。
 """
 
 import logging
 from io import BytesIO
-from typing import List
+from typing import List, Union
 
 from knowlebase.parsers.base import (
     BaseParser,
+    ParsedImage,
     ParsedSection,
     ParsedText,
     ParseResult,
 )
+from knowlebase.parsers.image_storage import store_image
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +29,7 @@ class PDFParser(BaseParser):
         逐页提取文本，使用 pdfplumber 获取每个文本块的坐标信息，
         按 y 坐标间距聚类识别段落，每页的段落作为独立的 ParsedText。
         空白页会被跳过。
+        同时使用 PyMuPDF 提取图片（可选，未安装时跳过图片提取）。
         """
         try:
             import pdfplumber
@@ -37,17 +40,53 @@ class PDFParser(BaseParser):
         pdf = pdfplumber.open(BytesIO(content))
         page_count = len(pdf.pages)
 
-        content_items: List[ParsedText] = []
+        # 可选：PyMuPDF 用于图片提取
+        fitz_doc = None
+        try:
+            import fitz  # pymupdf
+            fitz_doc = fitz.open(stream=content, filetype="pdf")
+        except ImportError:
+            logger.debug("pymupdf 未安装，跳过图片提取")
+
+        content_items: List[Union[ParsedText, ParsedImage]] = []
+        has_images = False
+
         for i, page in enumerate(pdf.pages):
+            page_num = i + 1
+
+            # 提取文本
             page_text = self._extract_page_text(page)
             page_text = page_text.strip()
-            if not page_text:
-                continue
-            content_items.append(
-                ParsedText(text=page_text, page_number=i + 1)
-            )
+            if page_text:
+                content_items.append(
+                    ParsedText(text=page_text, page_number=page_num)
+                )
+
+            # 提取图片（仅当 pymupdf 可用时）
+            if fitz_doc:
+                fitz_page = fitz_doc[page_num - 1]
+                for img_index, img in enumerate(fitz_page.get_images(full=True)):
+                    xref = img[0]
+                    pix = fitz.Pixmap(fitz_doc, xref)
+                    if pix.n - pix.alpha > 3:  # CMYK: 转为 RGB
+                        pix = fitz.Pixmap(fitz.Pixmap(fitz.csRGB, pix))
+                    img_bytes = pix.tobytes("png")
+                    pix = None  # 释放内存
+
+                    if img_bytes:
+                        img_path = store_image(img_bytes, ext="png")
+                        content_items.append(
+                            ParsedImage(
+                                image_path=img_path,
+                                caption=f"[第{page_num}页图片{img_index + 1}]",
+                                page_number=page_num,
+                            )
+                        )
+                        has_images = True
 
         pdf.close()
+        if fitz_doc:
+            fitz_doc.close()
 
         sections = [
             ParsedSection(title="", content=content_items)
@@ -56,7 +95,7 @@ class PDFParser(BaseParser):
         return ParseResult(
             sections=sections,
             page_count=page_count,
-            has_images=False,
+            has_images=has_images,
             has_tables=False,
         )
 

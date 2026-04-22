@@ -15,6 +15,7 @@ from knowlebase.parsers.base import (
     ParsedText,
     ParseResult,
 )
+from knowlebase.parsers.image_storage import store_image
 
 logger = logging.getLogger(__name__)
 
@@ -83,13 +84,27 @@ class DOCXParser(BaseParser):
                     for run in para.runs:
                         if run._r.xpath(".//a:blip"):
                             has_images = True
-                            root_content.append(
-                                ParsedImage(caption=f"[段落中的图片]")
-                            )
+                            # 从关系中获取图片
+                            img_paths = self._extract_inline_images(para, doc)
+                            for img_path in img_paths:
+                                root_content.append(
+                                    ParsedImage(
+                                        image_path=img_path,
+                                        caption=f"[段落中的图片]",
+                                    )
+                                )
 
         # 检查独立的图片（InlineShape）
         if doc.inline_shapes:
             has_images = True
+            img_paths = self._extract_all_images(doc)
+            for img_path in img_paths:
+                root_content.append(
+                    ParsedImage(
+                        image_path=img_path,
+                        caption=f"[独立图片]",
+                    )
+                )
 
         # 将非 section 的顶层元素分组到默认 section
         sections = self._organize_sections(root_content)
@@ -155,3 +170,39 @@ class DOCXParser(BaseParser):
             if para._element is element:
                 return para
         return None
+
+    def _extract_inline_images(self, para, doc) -> list:
+        """从段落的 run 中提取内联图片"""
+        from docx.oxml.ns import qn
+        paths = []
+        seen_rids = set()
+
+        for run in para.runs:
+            blips = run._r.findall(qn("a:blip"))
+            for blip in blips:
+                embed = blip.get(qn("r:embed"))
+                if embed and embed not in seen_rids:
+                    seen_rids.add(embed)
+                    rel = doc.part.rels.get(embed)
+                    if rel and "image" in rel.target_ref:
+                        img_bytes = rel.target_part.blob
+                        content_type = rel.target_part.content_type
+                        ext = content_type.split("/")[-1] if "/" in content_type else "png"
+                        img_path = store_image(img_bytes, ext=ext)
+                        paths.append(img_path)
+        return paths
+
+    def _extract_all_images(self, doc) -> list:
+        """提取文档中所有独立图片"""
+        paths = []
+        seen_rids = set()
+
+        for rel_id, rel in doc.part.rels.items():
+            if "image" in rel.target_ref and rel_id not in seen_rids:
+                seen_rids.add(rel_id)
+                img_bytes = rel.target_part.blob
+                content_type = rel.target_part.content_type
+                ext = content_type.split("/")[-1] if "/" in content_type else "png"
+                img_path = store_image(img_bytes, ext=ext)
+                paths.append(img_path)
+        return paths

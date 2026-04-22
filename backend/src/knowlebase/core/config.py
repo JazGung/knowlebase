@@ -11,10 +11,14 @@
 """
 
 import os
+import math
+import logging
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 from pydantic_settings import BaseSettings
 from pydantic import Field, PostgresDsn, AnyUrl
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -129,6 +133,34 @@ class Settings(BaseSettings):
     docker_container: bool = Field(default=False, env="DOCKER_CONTAINER")
 
     # ====================
+    # LLM 模型配置
+    # ====================
+
+    # 默认 LLM 配置（MODEL 和 API_KEY 必须有值）
+    default_llm_model: str = Field(default="gpt-4o-mini", env="DEFAULT_LLM_MODEL")
+    default_llm_api_key: str = Field(default="", env="DEFAULT_LLM_API_KEY")
+    default_llm_api_base: str = Field(default="https://api.openai.com/v1", env="DEFAULT_LLM_API_BASE")
+
+    # 分块模型（One-Pass：分块+指代消解+HyDE+图谱三元组）
+    chunking_model: str = Field(default="", env="CHUNKING_MODEL")
+    chunking_api_key: str = Field(default="", env="CHUNKING_API_KEY")
+    chunking_api_base: str = Field(default="", env="CHUNKING_API_BASE")
+
+    # 图片描述模型（视觉模型，用于生成图片文字说明）
+    image_describer_model: str = Field(default="", env="IMAGE_DESCRIBER_MODEL")
+    image_describer_api_key: str = Field(default="", env="IMAGE_DESCRIBER_API_KEY")
+    image_describer_api_base: str = Field(default="", env="IMAGE_DESCRIBER_API_BASE")
+
+    # ====================
+    # 分块参数配置
+    # ====================
+
+    chunk_max_chars: Union[int, float, str] = Field(default=800, env="CHUNK_MAX_CHARS")
+    chunk_min_chars: Union[int, float, str] = Field(default=0.5, env="CHUNK_MIN_CHARS")
+    chunk_overlap: Union[int, float, str] = Field(default=0.1, env="CHUNK_OVERLAP")
+    chunk_window: Union[int, float, str] = Field(default=1.5, env="CHUNK_WINDOW")
+
+    # ====================
     # 配置类设置
     # ====================
 
@@ -158,6 +190,125 @@ class Settings(BaseSettings):
             "development_mode": self.is_local_development(),
             "docker_container": self.docker_container,
         }
+
+    # ====================
+    # LLM 配置解析
+    # ====================
+
+    def _resolve_llm_config(self, model: str, api_key: str, api_base: str) -> dict:
+        """解析 LLM 配置
+
+        规则：
+        - MODEL/API_KEY 为空 → 回退到 DEFAULT_LLM_*，仍为空则报错
+        - API_BASE 为空 → 不回退（LangChain 使用自身默认值）
+        """
+        resolved_model = model or self.default_llm_model
+        resolved_api_key = api_key or self.default_llm_api_key
+        resolved_api_base = api_base  # 空值直接传给 LangChain
+
+        if not resolved_model:
+            raise ValueError(
+                "LLM 模型未配置。请设置 DEFAULT_LLM_MODEL 或具体模块的 *_MODEL 环境变量。"
+            )
+        if not resolved_api_key:
+            raise ValueError(
+                f"LLM API Key 未配置（model={resolved_model}）。"
+                "请设置 DEFAULT_LLM_API_KEY 或具体模块的 *_API_KEY 环境变量。"
+            )
+
+        return {
+            "model": resolved_model,
+            "api_key": resolved_api_key,
+            "api_base": resolved_api_base,
+        }
+
+    def get_chunking_llm_config(self) -> dict:
+        """获取分块 LLM 配置"""
+        return self._resolve_llm_config(
+            self.chunking_model,
+            self.chunking_api_key,
+            self.chunking_api_base,
+        )
+
+    def get_image_describer_llm_config(self) -> dict:
+        """获取图片描述 LLM 配置"""
+        return self._resolve_llm_config(
+            self.image_describer_model,
+            self.image_describer_api_key,
+            self.image_describer_api_base,
+        )
+
+    def log_llm_config_summary(self) -> None:
+        """打印 LLM 配置摘要（隐藏 API Key 中间字符）"""
+        def mask_key(key: str) -> str:
+            if len(key) <= 8:
+                return "***"
+            return key[:4] + "..." + key[-4:]
+
+        for name, getter in [("分块", self.get_chunking_llm_config),
+                             ("图片描述", self.get_image_describer_llm_config)]:
+            cfg = getter()
+            logger.info(
+                f"LLM 配置 ({name}): "
+                f"model={cfg['model']}, "
+                f"api_key={mask_key(cfg['api_key'])}, "
+                f"api_base={cfg['api_base'] or '(LangChain 默认)'}"
+            )
+
+    # ====================
+    # 分块参数解析
+    # ====================
+
+    @staticmethod
+    def _resolve_param(value, base: int, range_lo: float, range_hi: float) -> int:
+        """解析分块参数
+
+        Args:
+            value: 配置值
+            base: 基准值（max_chars）
+            range_lo: 比例范围下限
+            range_hi: 比例范围上限
+                - 在 (range_lo, range_hi) 内 → value * base
+                - 否则 → value（绝对值）
+        """
+        try:
+            value = float(value)
+        except (ValueError, TypeError):
+            value = 0
+
+        if range_lo < value < range_hi:
+            return math.floor(value * base)
+        return math.floor(value)
+
+    def get_chunk_params(self) -> dict:
+        """解析并返回分块参数"""
+        max_chars = self._resolve_param(self.chunk_max_chars, 800, 0, 0) or 800
+        if max_chars <= 0:
+            max_chars = 800
+
+        min_chars = self._resolve_param(self.chunk_min_chars, max_chars, 0, 1)
+        if min_chars <= 0:
+            min_chars = 1
+
+        overlap = self._resolve_param(self.chunk_overlap, max_chars, 0, 1)
+        if overlap <= 0:
+            overlap = 1
+
+        window = self._resolve_param(self.chunk_window, max_chars, 1, 5)
+        if window <= 0:
+            window = max_chars
+
+        cfg = {
+            "max_chars": max_chars,
+            "min_chars": min_chars,
+            "overlap": overlap,
+            "window": window,
+        }
+        logger.info(
+            f"分块参数: max_chars={max_chars}, min_chars={min_chars}, "
+            f"overlap={overlap}, window={window}"
+        )
+        return cfg
 
 
 # 全局配置实例

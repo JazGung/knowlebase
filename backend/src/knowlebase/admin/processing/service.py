@@ -17,6 +17,8 @@ from knowlebase.models.document import Document, DocumentProcessingHistory
 from knowlebase.parsers import parse_document
 from knowlebase.parsers.base import ParseResult
 from knowlebase.cleaners import clean_document
+from knowlebase.chunker import chunk_document
+from knowlebase.chunker.image_describer import replace_images_with_markers
 from knowlebase.services.minio_service import get_minio_service
 
 logger = logging.getLogger(__name__)
@@ -25,7 +27,7 @@ logger = logging.getLogger(__name__)
 class ProcessingService:
     """文档处理服务
 
-    处理流水线：下载 → 解析
+    处理流水线：下载 → 解析 → 清洗 → 图片描述 → 分块 → 存储/向量化
     """
 
     async def process_document(
@@ -83,19 +85,31 @@ class ProcessingService:
 
             # 3.5. 清洗文档
             result = clean_document(result)
-            logger.debug(
-                f"清洗结果详情: {filename}\n"
-                f"{json.dumps(self._parse_result_to_dict(result), ensure_ascii=False, indent=2)}"
-            )
             logger.info(
-                f"解析完成: {filename}, "
+                f"清洗完成: {filename}, "
                 f"sections={len(result.sections)}, "
-                f"pages={result.page_count}, "
-                f"has_tables={result.has_tables}, "
                 f"has_images={result.has_images}"
             )
 
-            # 4. 更新文档状态
+            # 4. 图片描述 + 分块
+            if proc:
+                proc.current_stage = "chunking"
+                proc.progress = 70
+                await db.commit()
+
+            # 图片描述：将 ParsedImage 替换为 [IMAGE_START:caption]描述[IMAGE_END]
+            result = replace_images_with_markers(result)
+
+            # LLM 分块
+            chunks = chunk_document(result.sections, metadata={"filename": filename})
+            logger.info(
+                f"分块完成: {filename}, chunks={len(chunks)}, "
+                f"total_relations={sum(len(c.relations) for c in chunks)}"
+            )
+
+            # TODO: 5. 存储分块结果到向量库/图谱
+
+            # 6. 更新文档状态
             doc.status = "success"
             doc.processed_at = datetime.now()
             doc.processing_id = processing_id
@@ -110,6 +124,8 @@ class ProcessingService:
                     "page_count": result.page_count,
                     "has_images": result.has_images,
                     "has_tables": result.has_tables,
+                    "chunks_count": len(chunks),
+                    "relations_count": sum(len(c.relations) for c in chunks),
                 }
 
             await db.commit()
@@ -120,6 +136,7 @@ class ProcessingService:
                 "processing_id": processing_id,
                 "status": "success",
                 "page_count": result.page_count,
+                "chunks_count": len(chunks),
             }
 
         except Exception as e:

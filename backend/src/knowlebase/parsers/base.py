@@ -20,8 +20,7 @@ class ParsedText:
 class ParsedImage:
     """图片"""
     type: str = "image"
-    data: str = ""  # base64 编码
-    format: str = "png"
+    image_path: str = ""  # MinIO 对象路径
     caption: str = ""
     page_number: Optional[int] = None
 
