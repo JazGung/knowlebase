@@ -140,3 +140,66 @@ export async function reprocessDocument(documentId, forceReprocess = false) {
     body: JSON.stringify({ document_id: documentId, force_reprocess: forceReprocess }),
   })
 }
+
+// ==================== 知识库版本管理 ====================
+
+/**
+ * GET /build/version/list - 版本列表
+ * @param {Object} params - {page, page_size, status}
+ */
+export async function getVersionList(params = {}) {
+  const query = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== '') {
+      query.append(key, value)
+    }
+  }
+  const url = `/build/version/list?${query.toString()}`
+  const res = await request(url)
+  return res.data || { versions: [], total: 0, page: 1, page_size: 20 }
+}
+
+/**
+ * GET /build/version/detail - 版本详情
+ * @param {string} versionId
+ */
+export async function getVersionDetail(versionId) {
+  const res = await request(`/build/version/detail?version_id=${encodeURIComponent(versionId)}`)
+  return res.data
+}
+
+/**
+ * POST /build/version/create - 创建重建版本
+ * @param {Object} data - {created_by?: string}
+ */
+export async function createVersion(data = {}) {
+  return request('/build/version/create', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+}
+
+/**
+ * PUT /build/version/enable - 启用版本
+ * @param {string} versionId
+ */
+export async function enableVersion(versionId) {
+  return request('/build/version/enable', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ version_id: versionId }),
+  })
+}
+
+/**
+ * PUT /build/version/disable - 停用版本
+ * @param {string} versionId
+ */
+export async function disableVersion(versionId) {
+  return request('/build/version/disable', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ version_id: versionId }),
+  })
+}
