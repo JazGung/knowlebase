@@ -1,1 +1,0 @@
-call claudestartup /d "%~dp0" /c "pythonconf" /p "-c"
