@@ -226,7 +226,7 @@ async function handleCreate() {
   try {
     await ElMessageBox.confirm('确定要创建新的知识库重建版本吗？', '确认操作', { type: 'info' })
     const result = await createVersion({})
-    ElMessage.success(`版本创建成功: ${result.data?.version_id}`)
+    ElMessage.success(`版本创建成功: ${result.content?.version_id}`)
     loadVersions()
   } catch (err) {
     if (err?.name === 'Cancel') return

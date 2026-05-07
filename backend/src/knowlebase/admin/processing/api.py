@@ -1,110 +1,161 @@
-"""文档处理 API 端点
+"""
+文档处理 API 端点
 
-包含文档解析、分块、处理状态查询等 API 端点
+包含处理状态查询、阶段结果详情、处理过程视图、SSE 进度流等 API 端点
 """
 
+import asyncio
+import json
 import logging
 
-from fastapi import APIRouter, Depends, Query
-from fastapi.responses import JSONResponse as FastAPIJSONResponse
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from knowlebase.db.session import get_db
-from knowlebase.models.document import DocumentProcessingHistory
 from knowlebase.admin.processing.service import get_processing_service, ProcessingService
+from knowlebase.events import get_event_bus
+from knowlebase.schemas.document import BaseResponse
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 
-@router.post(
-    "/trigger",
-    summary="手动触发文档处理",
-    description="手动触发指定文档的解析、分块处理流程",
+@router.get(
+    "/status/{processing_id}",
+    response_model=BaseResponse,
+    summary="处理状态查询",
     tags=["文档处理"]
 )
-async def trigger_processing(
-    document_id: int = Query(..., description="文档 ID"),
+async def get_processing_status(
+    processing_id: str,
     db: AsyncSession = Depends(get_db),
     processing_svc: ProcessingService = Depends(get_processing_service),
 ):
+    """查询文档处理状态，包含各阶段元信息"""
     try:
-        import asyncio
-        import uuid
+        result = await processing_svc.get_processing_status(db, processing_id)
 
-        processing_id = f"proc_{uuid.uuid4().hex[:12]}"
+        if not result:
+            return JSONResponse(
+                status_code=200,
+                content={"code": "404001", "description": "处理记录不存在", "content": None}
+            )
 
-        asyncio.create_task(
-            processing_svc.process_document(db, document_id, processing_id)
-        )
-
-        return FastAPIJSONResponse(
-            status_code=200,
-            content={
-                "code": 0,
-                "message": "文档处理已触发",
-                "data": {
-                    "document_id": str(document_id),
-                    "processing_id": processing_id,
-                },
-            },
+        return BaseResponse(
+            description="处理状态查询成功",
+            content=result
         )
 
     except Exception as e:
-        logger.error(f"触发文档处理失败: {e}", exc_info=True)
-        return FastAPIJSONResponse(
+        logger.error(f"处理状态查询失败: {e}", exc_info=True)
+        return JSONResponse(
             status_code=200,
-            content={"code": 500, "message": "触发文档处理失败", "detail": str(e)},
+            content={"code": "500000", "description": "处理状态查询失败", "content": None}
         )
 
 
 @router.get(
-    "/status",
-    summary="查询处理状态",
-    description="根据 processing_id 查询文档处理状态和进度",
+    "/stage/{processing_id}/{stage_name}",
+    response_model=BaseResponse,
+    summary="阶段结果详情",
     tags=["文档处理"]
 )
-async def get_processing_status(
-    processing_id: str = Query(..., description="处理任务 ID"),
+async def get_stage_result(
+    processing_id: str,
+    stage_name: str,
     db: AsyncSession = Depends(get_db),
+    processing_svc: ProcessingService = Depends(get_processing_service),
 ):
+    """查询指定处理阶段的中间结果详情，从 MinIO 读取 JSON"""
     try:
-        query = select(DocumentProcessingHistory).where(
-            DocumentProcessingHistory.processing_id == processing_id
-        )
-        result = await db.execute(query)
-        proc = result.scalar_one_or_none()
+        result = await processing_svc.get_stage_result(db, processing_id, stage_name)
 
-        if not proc:
-            return FastAPIJSONResponse(
+        if not result:
+            return JSONResponse(
                 status_code=200,
-                content={"code": 404, "message": "处理记录不存在"},
+                content={"code": "404001", "description": "阶段结果不存在", "content": None}
             )
 
-        return FastAPIJSONResponse(
-            status_code=200,
-            content={
-                "code": 0,
-                "message": "查询成功",
-                "data": {
-                    "processing_id": proc.processing_id,
-                    "document_id": str(proc.document_id),
-                    "status": proc.status,
-                    "current_stage": proc.current_stage,
-                    "progress": proc.progress,
-                    "started_at": proc.started_at.isoformat() if proc.started_at else None,
-                    "completed_at": proc.completed_at.isoformat() if proc.completed_at else None,
-                    "error_message": proc.error_message,
-                    "result": proc.result,
-                },
-            },
+        return BaseResponse(
+            description="阶段结果查询成功",
+            content=result
         )
 
     except Exception as e:
-        logger.error(f"查询处理状态失败: {e}", exc_info=True)
-        return FastAPIJSONResponse(
+        logger.error(f"阶段结果查询失败: {e}", exc_info=True)
+        return JSONResponse(
             status_code=200,
-            content={"code": 500, "message": "查询处理状态失败", "detail": str(e)},
+            content={"code": "500000", "description": "阶段结果查询失败", "content": None}
         )
+
+
+@router.get(
+    "/view",
+    response_model=BaseResponse,
+    summary="处理过程视图",
+    tags=["文档处理"]
+)
+async def get_processing_view(
+    document_ids: str = Query(..., description="逗号分隔的文档ID列表"),
+    db: AsyncSession = Depends(get_db),
+    processing_svc: ProcessingService = Depends(get_processing_service),
+):
+    """查询多个文档的处理过程，返回多 tab 视图数据"""
+    try:
+        doc_id_list = [int(did.strip()) for did in document_ids.split(",") if did.strip()]
+        if not doc_id_list:
+            return JSONResponse(
+                status_code=200,
+                content={"code": "400004", "description": "document_ids 不能为空", "content": None}
+            )
+
+        result = await processing_svc.get_processing_view(db, doc_id_list)
+
+        return BaseResponse(
+            description="处理过程视图查询成功",
+            content=result
+        )
+
+    except Exception as e:
+        logger.error(f"处理过程视图查询失败: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=200,
+            content={"code": "500000", "description": "处理过程视图查询失败", "content": None}
+        )
+
+
+@router.get(
+    "/stream/{processing_id}",
+    summary="处理进度 SSE 流",
+    tags=["文档处理"]
+)
+async def stream_processing_progress(
+    processing_id: str,
+    request: Request,
+):
+    """SSE 实时推送处理进度，每个阶段完成时推送事件"""
+    event_bus = get_event_bus()
+
+    async def event_generator():
+        try:
+            async for event in event_bus.subscribe(processing_id=processing_id):
+                if await request.is_disconnected():
+                    break
+                yield f"data: {event.to_json()}\n\n"
+                # 终态检查：失败或最后一阶段完成时关闭流
+                if event.status == "failed" or event.stage_name == "stored":
+                    break
+        except asyncio.CancelledError:
+            pass
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        }
+    )

@@ -28,10 +28,11 @@ async function request(url, options = {}) {
   const data = await res.json()
 
   // 检查业务错误码（后端统一返回 HTTP 200，业务错误通过 code 区分）
-  if (data.code !== 0) {
-    const error = new Error(data.message || `业务错误 code=${data.code}`)
+  // 成功码为字符串 "000000"，警告码 "0xxxxx"，错误码 "1xxxxx~9xxxxx"
+  if (data.code !== "000000") {
+    const error = new Error(data.description || `业务错误 code=${data.code}`)
     error.code = data.code
-    error.detail = data.detail
+    error.content = data.content
     throw error
   }
 
@@ -50,7 +51,7 @@ export async function checkDuplicates(files) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ files }),
   })
-  return res.data || { duplicate_files: [] }
+  return res.content || { duplicate_files: [] }
 }
 
 // ==================== 文件上传 ====================
@@ -74,7 +75,7 @@ export async function uploadFile(file, hash, metadata = {}) {
     method: 'POST',
     body: formData,
   })
-  return res.data
+  return res.content
 }
 
 // ==================== 文档管理 ====================
@@ -92,7 +93,7 @@ export async function getDocumentList(params = {}) {
   }
   const url = `/build/document/list?${query.toString()}`
   const res = await request(url)
-  return res.data || { documents: [], pagination: { total: 0, page: 1, page_size: 20, total_pages: 0 } }
+  return res.content || { documents: [], pagination: { total: 0, page: 1, page_size: 20, total_pages: 0 } }
 }
 
 /**
@@ -101,7 +102,7 @@ export async function getDocumentList(params = {}) {
  */
 export async function getDocumentDetail(documentId) {
   const res = await request(`/build/document/detail?document_id=${encodeURIComponent(documentId)}`)
-  return res.data
+  return res.content
 }
 
 /**
@@ -156,7 +157,7 @@ export async function getVersionList(params = {}) {
   }
   const url = `/build/version/list?${query.toString()}`
   const res = await request(url)
-  return res.data || { versions: [], total: 0, page: 1, page_size: 20 }
+  return res.content || { versions: [], total: 0, page: 1, page_size: 20 }
 }
 
 /**
@@ -165,7 +166,7 @@ export async function getVersionList(params = {}) {
  */
 export async function getVersionDetail(versionId) {
   const res = await request(`/build/version/detail?version_id=${encodeURIComponent(versionId)}`)
-  return res.data
+  return res.content
 }
 
 /**

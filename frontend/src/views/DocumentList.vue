@@ -402,7 +402,7 @@ async function handleReprocessSingle(documentId) {
   try {
     await ElMessageBox.confirm(`确定要重新处理文档「${row.original_filename}」吗？`, '确认操作', { type: 'warning' })
     const result = await reprocessDocument(documentId, false)
-    ElMessage.success(`已发起重新处理，任务ID: ${result.data?.processing_id || '未知'}`)
+    ElMessage.success(`已发起重新处理，任务ID: ${result.content?.processing_id || '未知'}`)
     loadDocuments()
   } catch (err) {
     if (err?.name === 'Cancel') {

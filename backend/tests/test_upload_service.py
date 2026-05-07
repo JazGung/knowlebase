@@ -178,13 +178,16 @@ class TestBatchCheckDuplicates:
         assert result == []
 
     @pytest.mark.asyncio
-    async def test_missing_fields_skipped(self, service):
+    async def test_invalid_hash_format_skipped(self, service):
+        """无效 hash 格式被跳过，不查询 DB"""
         mock_db = AsyncMock()
         result = await service.batch_check_duplicates(mock_db, [
-            {"filename": "nohash.pdf"},
-            {"hash": "a" * 32},
+            {"filename": "a.pdf", "hash": "too-short"},
+            {"filename": "b.pdf", "hash": ""},
+            {"filename": "c.pdf", "hash": "gggggggggggggggggggggggggggggggg"},
         ])
         assert result == []
+        mock_db.execute.assert_not_awaited()
 
 
 class TestProcessUpload:

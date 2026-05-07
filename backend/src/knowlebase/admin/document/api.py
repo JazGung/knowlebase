@@ -7,24 +7,18 @@
 import logging
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query, status
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from knowlebase.db.session import get_db
 from knowlebase.schemas.document import (
     FileCheckRequest,
-    FileCheckSuccessResponse,
-    DocumentUploadSuccessResponse,
-    DocumentUploadRequestMetadata,
-    IntegrityValidationErrorResponse,
     DocumentListQuery,
-    DocumentDetailSuccessResponse,
     EnableDisableDocumentRequest,
-    ReprocessDocumentRequest,
-    ReprocessDocumentSuccessResponse,
-    SuccessResponse,
-    ErrorResponse,
+    ProcessingTriggerRequest,
+    BaseResponse,
+    BatchResult,
 )
 from knowlebase.admin.document.service import (
     get_upload_service,
@@ -35,15 +29,13 @@ from knowlebase.admin.document.service import (
 
 logger = logging.getLogger(__name__)
 
-# 创建路由器
 router = APIRouter()
 
 
 @router.post(
     "/check",
-    response_model=FileCheckSuccessResponse,
-    summary="检查文件重复性",
-    description="批量检查文件哈希是否与后台已有文件重复",
+    response_model=BaseResponse,
+    summary="文件重复性校验",
     tags=["文档管理"]
 )
 async def check_file_duplicates(
@@ -51,6 +43,7 @@ async def check_file_duplicates(
     db: AsyncSession = Depends(get_db),
     upload_service: UploadService = Depends(get_upload_service)
 ):
+    """批量检查文件哈希是否与已有文件重复"""
     try:
         logger.info(f"重复性校验请求: {len(request.files)} 个文件")
 
@@ -59,34 +52,28 @@ async def check_file_duplicates(
             [{"filename": item.filename, "hash": item.hash} for item in request.files]
         )
 
-        return FileCheckSuccessResponse(
-            code=0,
-            message="重复性校验完成",
-            data={"duplicate_files": duplicate_files}
+        return BaseResponse(
+            description="重复性校验完成",
+            content={"duplicate_files": duplicate_files}
         )
 
     except Exception as e:
         logger.error(f"重复性校验失败: {e}", exc_info=True)
         return JSONResponse(
             status_code=200,
-            content={"code": 500, "message": "重复性校验失败", "detail": str(e)}
+            content={"code": "500000", "description": "重复性校验失败", "content": None}
         )
 
 
 @router.post(
     "/upload",
-    response_model=DocumentUploadSuccessResponse,
-    responses={
-        400: {"model": IntegrityValidationErrorResponse},
-        200: {"model": DocumentUploadSuccessResponse},
-    },
+    response_model=BaseResponse,
     summary="单文件上传",
-    description="单个文件上传接口，包含完整性验证",
     tags=["文档管理"]
 )
 async def upload_document(
     file: UploadFile = File(..., description="文件内容"),
-    hash: str = Form(..., description="文件的MD5哈希值（32位十六进制字符串）"),
+    hash: str = Form(..., description="文件的MD5哈希值"),
     title: Optional[str] = Form(None, description="文档标题"),
     description: Optional[str] = Form(None, description="文档描述"),
     category: Optional[str] = Form(None, description="文档分类"),
@@ -94,6 +81,7 @@ async def upload_document(
     db: AsyncSession = Depends(get_db),
     upload_service: UploadService = Depends(get_upload_service)
 ):
+    """单文件上传，包含完整性验证"""
     try:
         logger.info(f"文件上传请求: {file.filename}, hash: {hash}")
 
@@ -112,59 +100,29 @@ async def upload_document(
             user_id=None
         )
 
-        if upload_result.get("duplicate", False):
-            return DocumentUploadSuccessResponse(
-                code=0,
-                message="文件已存在",
-                data={
-                    "document_id": upload_result["document_id"],
-                    "filename": upload_result["filename"],
-                    "original_filename": upload_result["original_filename"],
-                    "file_hash": upload_result["file_hash"],
-                    "file_size": upload_result["file_size"],
-                    "status": "duplicate",
-                    "processing_id": None,
-                    "processing_number": 1,
-                    "progress_stream_url": None
-                }
-            )
-
-        return DocumentUploadSuccessResponse(
-            code=0,
-            message="文档上传成功",
-            data={
-                "document_id": upload_result["document_id"],
-                "filename": upload_result["filename"],
-                "original_filename": upload_result["original_filename"],
-                "file_hash": upload_result["file_hash"],
-                "file_size": upload_result["file_size"],
-                "status": upload_result["status"],
-                "processing_id": upload_result["processing_id"],
-                "processing_number": upload_result["processing_number"],
-                "progress_stream_url": upload_result["progress_stream_url"]
-            }
+        return BaseResponse(
+            description="文档上传成功",
+            content=upload_result
         )
 
     except Exception as e:
         logger.error(f"文件上传失败: {file.filename} - {e}", exc_info=True)
         return JSONResponse(
             status_code=200,
-            content={"code": 500, "message": "文件上传失败", "detail": str(e)}
+            content={"code": "500000", "description": "文件上传失败", "content": None}
         )
 
 
 @router.get(
     "/list",
-    response_model=SuccessResponse,
-    summary="文档列表查询",
-    description="查询文档列表，支持分页、过滤、搜索、排序",
+    response_model=BaseResponse,
+    summary="文档列表分页查询",
     tags=["文档管理"]
 )
 async def get_document_list(
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(20, ge=1, le=100, description="每页数量"),
-    status_filter: Optional[str] = Query(None, alias="status", description="状态过滤"),
-    enabled: Optional[bool] = Query(None, description="是否启用过滤"),
+    status: Optional[str] = Query(None, description="启用状态过滤（enabled/disabled）"),
     category: Optional[str] = Query(None, description="分类过滤"),
     search: Optional[str] = Query(None, description="关键字搜索"),
     sort_by: str = Query("created_at", description="排序字段"),
@@ -172,12 +130,12 @@ async def get_document_list(
     db: AsyncSession = Depends(get_db),
     document_service: DocumentService = Depends(get_document_service)
 ):
+    """查询文档列表，支持分页、过滤、搜索、排序"""
     try:
         query_params = DocumentListQuery(
             page=page,
             page_size=page_size,
-            status=status_filter,
-            enabled=enabled,
+            status=status,
             category=category,
             search=search,
             sort_by=sort_by,
@@ -186,25 +144,23 @@ async def get_document_list(
 
         result = await document_service.get_document_list(db, query_params)
 
-        return SuccessResponse(
-            code=0,
-            message="文档列表查询成功",
-            data=result
+        return BaseResponse(
+            description="文档列表查询成功",
+            content=result
         )
 
     except Exception as e:
         logger.error(f"文档列表查询失败: {e}", exc_info=True)
         return JSONResponse(
             status_code=200,
-            content={"code": 500, "message": "文档列表查询失败", "detail": str(e)}
+            content={"code": "500000", "description": "文档列表查询失败", "content": None}
         )
 
 
 @router.get(
     "/detail",
-    response_model=DocumentDetailSuccessResponse,
+    response_model=BaseResponse,
     summary="文档详情查询",
-    description="查询文档详情，包含处理历史记录",
     tags=["文档管理"]
 )
 async def get_document_detail(
@@ -212,126 +168,127 @@ async def get_document_detail(
     db: AsyncSession = Depends(get_db),
     document_service: DocumentService = Depends(get_document_service)
 ):
+    """查询文档详情，包含处理历史记录"""
     try:
         result = await document_service.get_document_detail(db, document_id)
 
         if not result:
             return JSONResponse(
                 status_code=200,
-                content={"code": 404, "message": "文档不存在", "detail": f"文档ID: {document_id}"}
+                content={"code": "404001", "description": "文档不存在", "content": None}
             )
 
-        return DocumentDetailSuccessResponse(
-            code=0,
-            message="文档详情查询成功",
-            data=result
+        return BaseResponse(
+            description="文档详情查询成功",
+            content=result
         )
 
     except Exception as e:
         logger.error(f"文档详情查询失败: {e}", exc_info=True)
         return JSONResponse(
             status_code=200,
-            content={"code": 500, "message": "文档详情查询失败", "detail": str(e)}
+            content={"code": "500000", "description": "文档详情查询失败", "content": None}
         )
 
 
 @router.put(
     "/enable",
-    response_model=SuccessResponse,
-    summary="启用文档",
-    description="启用文档，使其可用于知识库重建和检索",
+    response_model=BaseResponse,
+    summary="文档启用",
     tags=["文档管理"]
 )
-async def enable_document(
+async def enable_documents(
     request: EnableDisableDocumentRequest,
     db: AsyncSession = Depends(get_db),
     document_service: DocumentService = Depends(get_document_service)
 ):
+    """批量启用文档"""
     try:
-        await document_service.enable_document(db, request.document_id)
+        results = []
+        for doc_id in request.document_ids:
+            try:
+                await document_service.enable_document(db, str(doc_id))
+                results.append(BatchResult(id=str(doc_id), status="success"))
+            except Exception as e:
+                logger.error(f"启用文档 {doc_id} 失败: {e}")
+                results.append(BatchResult(id=str(doc_id), status="failed", reason=str(e)))
 
-        return SuccessResponse(
-            code=0,
-            message="文档启用成功",
-            data={"document_id": request.document_id}
+        return BaseResponse(
+            description="文档启用完成",
+            content={"results": [r.model_dump() for r in results]}
         )
 
     except Exception as e:
         logger.error(f"文档启用失败: {e}", exc_info=True)
         return JSONResponse(
             status_code=200,
-            content={"code": 500, "message": "文档启用失败", "detail": str(e)}
+            content={"code": "500000", "description": "文档启用失败", "content": None}
         )
 
 
 @router.put(
     "/disable",
-    response_model=SuccessResponse,
-    summary="停用文档",
-    description="停用文档，使其不参与知识库重建和检索",
+    response_model=BaseResponse,
+    summary="文档停用",
     tags=["文档管理"]
 )
-async def disable_document(
+async def disable_documents(
     request: EnableDisableDocumentRequest,
     db: AsyncSession = Depends(get_db),
     document_service: DocumentService = Depends(get_document_service)
 ):
+    """批量停用文档"""
     try:
-        await document_service.disable_document(db, request.document_id)
+        results = []
+        for doc_id in request.document_ids:
+            try:
+                await document_service.disable_document(db, str(doc_id))
+                results.append(BatchResult(id=str(doc_id), status="success"))
+            except Exception as e:
+                logger.error(f"停用文档 {doc_id} 失败: {e}")
+                results.append(BatchResult(id=str(doc_id), status="failed", reason=str(e)))
 
-        return SuccessResponse(
-            code=0,
-            message="文档停用成功",
-            data={"document_id": request.document_id}
+        return BaseResponse(
+            description="文档停用完成",
+            content={"results": [r.model_dump() for r in results]}
         )
 
     except Exception as e:
         logger.error(f"文档停用失败: {e}", exc_info=True)
         return JSONResponse(
             status_code=200,
-            content={"code": 500, "message": "文档停用失败", "detail": str(e)}
+            content={"code": "500000", "description": "文档停用失败", "content": None}
         )
 
 
 @router.post(
-    "/reprocess",
-    response_model=ReprocessDocumentSuccessResponse,
-    summary="重新处理文档",
-    description="重新处理文档，触发文档解析、分块、向量化等处理流程",
+    "/process",
+    response_model=BaseResponse,
+    summary="文档处理",
     tags=["文档管理"]
 )
-async def reprocess_document(
-    request: ReprocessDocumentRequest,
+async def process_documents(
+    request: ProcessingTriggerRequest,
     db: AsyncSession = Depends(get_db),
     document_service: DocumentService = Depends(get_document_service)
 ):
+    """批量触发文档处理，启动解析、分块、向量化等处理流水线（DEG 4.10）"""
     try:
-        logger.info(f"重新处理文档请求: document_id={request.document_id}, force={request.force_reprocess}")
+        logger.info(f"批量处理请求: {len(request.document_ids)} 个文档")
 
-        result = await document_service.reprocess_document(
+        results = await document_service.process_documents(
             db,
-            request.document_id,
-            request.force_reprocess
+            request.document_ids
         )
 
-        logger.info(
-            f"文档重新处理已发起: document_id={result['document_id']}, "
-            f"processing_id={result['processing_id']}, "
-            f"processing_number={result['processing_number']}"
+        return BaseResponse(
+            description="文档处理已触发",
+            content={"results": [r.model_dump() for r in results]}
         )
-
-        return ReprocessDocumentSuccessResponse(
-            code=0,
-            message="文档重新处理已发起",
-            data=result
-        )
-
-    except HTTPException:
-        raise
 
     except Exception as e:
-        logger.error(f"文档重新处理失败: {e}", exc_info=True)
+        logger.error(f"触发文档处理失败: {e}", exc_info=True)
         return JSONResponse(
             status_code=200,
-            content={"code": 500, "message": "文档重新处理失败", "detail": str(e)}
+            content={"code": "500000", "description": "触发文档处理失败", "content": None}
         )

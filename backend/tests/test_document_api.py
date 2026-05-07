@@ -36,8 +36,8 @@ class TestDocumentEndpointsReachable:
     def test_disable_route_exists(self, route_paths):
         assert "/disable" in route_paths
 
-    def test_reprocess_route_exists(self, route_paths):
-        assert "/reprocess" in route_paths
+    def test_process_route_exists(self, route_paths):
+        assert "/process" in route_paths
 
     def test_check_is_post(self, route_paths):
         assert "POST" in route_paths["/check"]
@@ -57,9 +57,9 @@ class TestDocumentEndpointsReachable:
     def test_disable_is_put(self, route_paths):
         assert "PUT" in route_paths["/disable"]
 
-    def test_reprocess_is_post(self, route_paths):
-        assert "POST" in route_paths["/reprocess"]
+    def test_process_is_post(self, route_paths):
+        assert "POST" in route_paths["/process"]
 
     def test_all_endpoints_registered(self, route_paths):
-        expected = {"/check", "/upload", "/list", "/detail", "/enable", "/disable", "/reprocess"}
+        expected = {"/check", "/upload", "/list", "/detail", "/enable", "/disable", "/process"}
         assert expected == set(route_paths.keys())

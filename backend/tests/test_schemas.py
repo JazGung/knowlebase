@@ -16,14 +16,13 @@ from knowlebase.schemas.document import (
     DocumentUploadResponse,
     IntegrityValidationError,
     DocumentListQuery,
-    ProcessingStage,
+    ProcessingStageItem,
     ProcessingHistoryItem,
     EnableDisableDocumentRequest,
-    ReprocessDocumentRequest,
-    ReprocessDocumentResponse,
     BaseResponse,
-    SuccessResponse,
-    ErrorResponse,
+    BatchResult,
+    BatchResponse,
+    ProcessingTriggerRequest,
 )
 
 
@@ -34,15 +33,12 @@ class TestDocumentStatus:
     """测试 DocumentStatus 枚举"""
 
     def test_values(self):
-        assert DocumentStatus.PENDING == "pending"
-        assert DocumentStatus.PROCESSING == "processing"
-        assert DocumentStatus.SUCCESS == "success"
-        assert DocumentStatus.FAILED == "failed"
-        assert DocumentStatus.DELETED == "deleted"
+        assert DocumentStatus.ENABLED == "enabled"
+        assert DocumentStatus.DISABLED == "disabled"
 
     def test_string_comparison(self):
-        assert DocumentStatus.PENDING == "pending"
-        assert DocumentStatus.SUCCESS.value == "success"
+        assert DocumentStatus.ENABLED.value == "enabled"
+        assert DocumentStatus.DISABLED.value == "disabled"
 
 
 class TestProcessingStatus:
@@ -51,7 +47,7 @@ class TestProcessingStatus:
     def test_values(self):
         assert ProcessingStatus.PENDING == "pending"
         assert ProcessingStatus.PROCESSING == "processing"
-        assert ProcessingStatus.SUCCESS == "success"
+        assert ProcessingStatus.SUCCEEDED == "succeeded"
         assert ProcessingStatus.FAILED == "failed"
 
 
@@ -76,7 +72,6 @@ class TestFileCheckItem:
             FileCheckItem(filename="test.pdf", hash="z" * 32)
 
     def test_empty_filename_accepted(self):
-        # Pydantic 允许空字符串，实际业务逻辑会在 service 层验证
         item = FileCheckItem(filename="", hash=VALID_HASH)
         assert item.filename == ""
 
@@ -163,6 +158,10 @@ class TestDocumentListQuery:
         q = DocumentListQuery(order="asc")
         assert q.order == "asc"
 
+    def test_status_filter(self):
+        q = DocumentListQuery(status=DocumentStatus.ENABLED)
+        assert q.status == DocumentStatus.ENABLED
+
 
 class TestIntegrityValidationError:
     """测试 IntegrityValidationError"""
@@ -178,13 +177,70 @@ class TestIntegrityValidationError:
         assert err.error == "哈希不匹配"
 
 
-class TestReprocessDocumentRequest:
-    """测试 ReprocessDocumentRequest"""
+class TestBaseResponse:
+    """测试 BaseResponse 统一响应"""
 
-    def test_default_force_false(self):
-        req = ReprocessDocumentRequest(document_id="doc_123")
-        assert req.force_reprocess is False
+    def test_default_success(self):
+        resp = BaseResponse()
+        assert resp.code == "000000"
+        assert resp.description == "成功"
+        assert resp.content is None
 
-    def test_force_true(self):
-        req = ReprocessDocumentRequest(document_id="doc_123", force_reprocess=True)
-        assert req.force_reprocess is True
+    def test_error_response(self):
+        resp = BaseResponse(code="404001", description="文档不存在", content=None)
+        assert resp.code == "404001"
+
+    def test_with_content(self):
+        resp = BaseResponse(content={"key": "value"})
+        assert resp.content == {"key": "value"}
+
+
+class TestBatchResult:
+    """测试 BatchResult"""
+
+    def test_success_result(self):
+        r = BatchResult(id="doc_1", status="success")
+        assert r.status == "success"
+        assert r.reason is None
+
+    def test_failed_result(self):
+        r = BatchResult(id="doc_2", status="failed", reason="文档不存在")
+        assert r.status == "failed"
+        assert r.reason == "文档不存在"
+
+
+class TestBatchResponse:
+    """测试 BatchResponse"""
+
+    def test_empty_results(self):
+        resp = BatchResponse()
+        assert resp.results == []
+
+    def test_with_results(self):
+        resp = BatchResponse(results=[
+            BatchResult(id="1", status="success"),
+            BatchResult(id="2", status="failed", reason="error"),
+        ])
+        assert len(resp.results) == 2
+
+
+class TestProcessingTriggerRequest:
+    """测试 ProcessingTriggerRequest"""
+
+    def test_valid(self):
+        req = ProcessingTriggerRequest(document_ids=[1, 2, 3])
+        assert req.document_ids == [1, 2, 3]
+
+    def test_empty_list(self):
+        req = ProcessingTriggerRequest(document_ids=[])
+        assert req.document_ids == []
+
+
+class TestProcessingStageItem:
+    """测试 ProcessingStageItem"""
+
+    def test_valid(self):
+        item = ProcessingStageItem(stage_name="parsed", status="succeeded", duration_ms=150)
+        assert item.stage_name == "parsed"
+        assert item.status == "succeeded"
+        assert item.duration_ms == 150

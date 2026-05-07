@@ -13,4 +13,10 @@ export default defineConfig({
     trace: 'retain-on-failure',
   },
   reporter: 'list',
+  projects: [
+    {
+      name: 'chromium',
+      use: { browserName: 'chromium' },
+    },
+  ],
 });

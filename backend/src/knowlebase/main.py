@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from knowlebase.core.config import settings
-from knowlebase.db.session import session_manager, initialize_database
+from knowlebase.db.session import session_manager, initialize_database, Base
 from knowlebase.services.minio_service import init_minio
 from knowlebase.admin import build_router
 
@@ -50,6 +50,13 @@ async def lifespan(app: FastAPI):
     logger.info("初始化Minio连接...")
     init_minio()
     logger.info("Minio连接初始化完成")
+
+    # 创建数据库表
+    logger.info("创建数据库表...")
+    import knowlebase.models  # noqa: F401 — 确保所有模型已注册
+    async with session_manager.engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    logger.info("数据库表创建完成")
 
     yield
 
@@ -93,9 +100,9 @@ def create_app() -> FastAPI:
         return JSONResponse(
             status_code=200,
             content={
-                "code": 500,
-                "message": "服务器内部错误",
-                "detail": str(exc) if settings.debug else "内部服务器错误"
+                "code": "500000",
+                "description": str(exc) if settings.debug else "服务器内部错误",
+                "content": None
             }
         )
 
@@ -104,12 +111,11 @@ def create_app() -> FastAPI:
     async def health_check():
         """健康检查端点"""
         return {
-            "code": 0,
-            "message": "服务正常",
-            "data": {
+            "code": "000000",
+            "description": "服务正常",
+            "content": {
                 "status": "healthy",
-                "version": "1.0.0",
-                "timestamp": "2026-04-09T00:00:00Z"
+                "version": "1.0.0"
             }
         }
 
@@ -118,13 +124,11 @@ def create_app() -> FastAPI:
     async def root():
         """应用根端点"""
         return {
-            "code": 0,
-            "message": "知识库构建与检索系统 API",
-            "data": {
+            "code": "000000",
+            "description": "知识库构建与检索系统 API",
+            "content": {
                 "name": "知识库构建与检索系统",
-                "version": "1.0.0",
-                "description": "企业内部知识库文档管理和智能检索系统",
-                "docs": "/docs" if settings.debug else None
+                "version": "1.0.0"
             }
         }
 

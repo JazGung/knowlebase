@@ -20,12 +20,13 @@ def test_imports():
         ("knowlebase.admin.document.service", "UploadService"),
         ("knowlebase.admin.document.service", "DocumentService"),
         ("knowlebase.models.document", "Document"),
+        ("knowlebase.models.document", "DocumentProcessingHistory"),
         ("knowlebase.models.chunk", "DocumentChunk"),
         ("knowlebase.models.user", "User"),
-        ("knowlebase.models.file_cleanup", "FileCleanupLog"),
+        ("knowlebase.models.processing_stage_result", "ProcessingStageResult"),
         ("knowlebase.schemas.document", "FileCheckRequest"),
-        ("knowlebase.schemas.file_management", "OrphanedFileInfo"),
         ("knowlebase.admin.document.api", "router"),
+        ("knowlebase.admin.processing.api", "router"),
         ("knowlebase.admin", "build_router"),
         ("knowlebase.main", "app"),
         ("knowlebase.parsers", "parse_document"),
@@ -33,6 +34,11 @@ def test_imports():
         ("knowlebase.parsers.pdf_parser", "PDFParser"),
         ("knowlebase.parsers.docx_parser", "DOCXParser"),
         ("knowlebase.admin.processing.service", "ProcessingService"),
+        ("knowlebase.repositories", "DocumentRepository"),
+        ("knowlebase.repositories", "ProcessingHistoryRepository"),
+        ("knowlebase.repositories", "StageResultRepository"),
+        ("knowlebase.events", "ProcessingEventBus"),
+        ("knowlebase.events", "StageCompletedEvent"),
     ]
 
     print("开始测试模块导入...")

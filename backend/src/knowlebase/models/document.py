@@ -27,6 +27,7 @@ from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship, validates
 
 from knowlebase.db.session import Base
+from knowlebase.models.processing_stage_result import ProcessingStageResult  # noqa: F401
 
 
 class Document(Base):
@@ -99,27 +100,22 @@ class Document(Base):
     status = Column(
         String(20),
         nullable=False,
-        default="pending",
-        comment="文档状态：pending, processing, success, failed, deleted"
-    )
-    enabled = Column(
-        Boolean,
-        nullable=False,
-        default=True,
-        comment="是否启用（可用于知识库重建）"
+        default="enabled",
+        comment="文档状态：enabled/disabled"
     )
 
     # 处理信息
     processing_id = Column(
         String(36),
+        ForeignKey("document_processing_history.processing_id"),
         nullable=True,
         comment="当前处理任务ID"
     )
-    processing_number = Column(
+    attempt_no = Column(
         Integer,
         nullable=False,
         default=1,
-        comment="处理次数（第几次处理）"
+        comment="处理次数"
     )
     chunk_count = Column(
         Integer,
@@ -194,12 +190,18 @@ class Document(Base):
     # 关系
     user = relationship("User", back_populates="document", lazy="selectin")
     chunks = relationship("DocumentChunk", back_populates="document", cascade="all, delete-orphan", lazy="selectin")
-    processing_history = relationship("DocumentProcessingHistory", back_populates="document", cascade="all, delete-orphan", lazy="selectin")
+    processing_history = relationship(
+        "DocumentProcessingHistory",
+        back_populates="document",
+        foreign_keys="DocumentProcessingHistory.document_id",
+        cascade="all, delete-orphan",
+        lazy="selectin"
+    )
 
     # 约束
     __table_args__ = (
         CheckConstraint(
-            "status IN ('pending', 'processing', 'success', 'failed', 'deleted')",
+            "status IN ('enabled', 'disabled')",
             name="check_document_status"
         ),
         CheckConstraint(
@@ -207,12 +209,10 @@ class Document(Base):
             name="check_document_source_type"
         ),
         CheckConstraint(
-            "processing_number >= 1",
-            name="check_processing_number_positive"
+            "attempt_no >= 1",
+            name="check_attempt_no_positive"
         ),
         Index("idx_documents_file_hash", "file_hash", unique=True),
-        Index("idx_documents_status", "status"),
-        Index("idx_documents_enabled", "enabled"),
         Index("idx_documents_created_at", "created_at"),
         Index("idx_documents_category", "category"),
         Index("idx_document_tag", "tag", postgresql_using="gin"),
@@ -224,17 +224,16 @@ class Document(Base):
         """验证文件哈希格式"""
         if not value or len(value) != 32:
             raise ValueError("文件哈希必须是32位十六进制字符串")
-        # 验证十六进制格式
         try:
             int(value, 16)
         except ValueError:
             raise ValueError("文件哈希必须是有效的十六进制字符串")
-        return value.lower()  # 统一转为小写
+        return value.lower()
 
     @validates("status")
     def validate_status(self, key, value):
         """验证状态值"""
-        valid_statuses = {"pending", "processing", "success", "failed", "deleted"}
+        valid_statuses = {"enabled", "disabled"}
         if value not in valid_statuses:
             raise ValueError(f"状态必须是以下值之一: {', '.join(valid_statuses)}")
         return value
@@ -250,9 +249,8 @@ class Document(Base):
             "file_size": self.file_size,
             "mime_type": self.mime_type,
             "status": self.status,
-            "enabled": self.enabled,
             "processing_id": self.processing_id,
-            "processing_number": self.processing_number,
+            "attempt_no": self.attempt_no,
             "chunk_count": self.chunk_count,
             "total_tokens": self.total_tokens,
             "embedding_model": self.embedding_model,
@@ -274,6 +272,29 @@ class Document(Base):
                 result["processing_history"] = [history.to_dict() for history in self.processing_history]
 
         return result
+
+    # ---- 领域方法 ----
+
+    @property
+    def enabled(self) -> bool:
+        """启用状态（兼容属性）"""
+        return self.status == "enabled"
+
+    def enable(self) -> None:
+        """启用文档"""
+        self.status = "enabled"
+        self.updated_at = datetime.now()
+
+    def disable(self) -> None:
+        """停用文档"""
+        self.status = "disabled"
+        self.updated_at = datetime.now()
+
+    def add_processing_history(self, history: "DocumentProcessingHistory") -> None:
+        """添加处理历史记录，维护双向关联"""
+        history.document = self
+        if history not in (self.processing_history or []):
+            self.processing_history = (self.processing_history or []) + [history]
 
     def __repr__(self):
         return f"<Document(id={self.id}, filename='{self.original_filename}', status='{self.status}')>"
@@ -311,7 +332,7 @@ class DocumentProcessingHistory(Base):
         nullable=False,
         comment="处理任务ID"
     )
-    processing_number = Column(
+    attempt_no = Column(
         Integer,
         nullable=False,
         comment="处理次数（第几次处理）"
@@ -319,7 +340,7 @@ class DocumentProcessingHistory(Base):
     status = Column(
         String(20),
         nullable=False,
-        comment="处理状态：pending, processing, success, failed"
+        comment="处理状态：pending/processing/succeeded/failed"
     )
     current_stage = Column(
         String(50),
@@ -336,7 +357,8 @@ class DocumentProcessingHistory(Base):
     # 时间信息
     started_at = Column(
         TIMESTAMP(timezone=True),
-        nullable=True,
+        nullable=False,
+        server_default=func.current_timestamp(),
         comment="处理开始时间"
     )
     completed_at = Column(
@@ -352,20 +374,6 @@ class DocumentProcessingHistory(Base):
         comment="错误信息"
     )
 
-    # 处理结果
-    result = Column(
-        JSON,
-        nullable=True,
-        comment="处理结果（JSON格式）"
-    )
-
-    # 阶段详情
-    stages = Column(
-        JSON,
-        nullable=True,
-        comment="处理阶段详情（JSON数组）"
-    )
-
     # 时间戳
     created_at = Column(
         TIMESTAMP(timezone=True),
@@ -375,23 +383,34 @@ class DocumentProcessingHistory(Base):
     )
 
     # 关系
-    document = relationship("Document", back_populates="processing_history", lazy="selectin")
+    document = relationship(
+        "Document",
+        back_populates="processing_history",
+        foreign_keys=[document_id],
+        lazy="selectin"
+    )
+    stage_results = relationship(
+        "ProcessingStageResult",
+        back_populates="processing_history",
+        foreign_keys="ProcessingStageResult.processing_id",
+        cascade="all, delete-orphan",
+        lazy="selectin"
+    )
 
     # 约束
     __table_args__ = (
         CheckConstraint(
-            "status IN ('pending', 'processing', 'success', 'failed')",
+            "status IN ('pending', 'processing', 'succeeded', 'failed')",
             name="check_processing_status"
         ),
         CheckConstraint(
             "progress >= 0 AND progress <= 100",
             name="check_progress_range"
         ),
-        UniqueConstraint("document_id", "processing_number", name="uq_document_processing_number"),
+        UniqueConstraint("document_id", "attempt_no", name="uk_history_document_attempt_no"),
+        UniqueConstraint("processing_id", name="uk_history_processing_id"),
         Index("idx_processing_history_document_id", "document_id"),
         Index("idx_processing_history_processing_id", "processing_id"),
-        Index("idx_processing_history_status", "status"),
-        Index("idx_processing_history_created_at", "created_at"),
         {"comment": "文档处理历史记录表"}
     )
 
@@ -401,17 +420,40 @@ class DocumentProcessingHistory(Base):
             "id": str(self.id),
             "document_id": str(self.document_id),
             "processing_id": self.processing_id,
-            "processing_number": self.processing_number,
+            "attempt_no": self.attempt_no,
             "status": self.status,
             "current_stage": self.current_stage,
             "progress": self.progress,
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
             "error_message": self.error_message,
-            "result": self.result,
-            "stages": self.stages,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
+
+    # ---- 领域方法 ----
+
+    def add_stage_result(self, stage_result: "ProcessingStageResult") -> None:
+        """添加阶段结果，维护双向关联"""
+        stage_result.processing_history = self
+        if stage_result not in (self.stage_results or []):
+            self.stage_results = (self.stage_results or []) + [stage_result]
+
+    def mark_succeeded(self) -> None:
+        """标记处理成功"""
+        self.status = "succeeded"
+        self.progress = 100
+        self.completed_at = datetime.now()
+
+    def mark_failed(self, error_message: str) -> None:
+        """标记处理失败"""
+        self.status = "failed"
+        self.error_message = error_message
+        self.completed_at = datetime.now()
+
+    def update_progress(self, stage: str, progress: int) -> None:
+        """更新处理进度"""
+        self.current_stage = stage
+        self.progress = progress
 
     def __repr__(self):
         return f"<DocumentProcessingHistory(id={self.id}, document_id={self.document_id}, status='{self.status}', progress={self.progress}%)>"

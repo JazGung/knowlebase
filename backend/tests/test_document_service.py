@@ -1,10 +1,8 @@
 """
-单元测试 - DocumentService 业务逻辑（不依赖真实数据库和 Minio）
+单元测试 - DocumentService 业务逻辑（mock Repository 层）
 """
 
 import pytest
-import uuid
-from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi import HTTPException
@@ -14,9 +12,10 @@ from knowlebase.schemas.document import DocumentListQuery
 
 
 def make_mock_document(overrides: dict = None) -> MagicMock:
-    """创建 mock Document 对象"""
     doc = MagicMock()
-    doc.id = f"doc_{uuid.uuid4().hex[:8]}"
+    doc.enable = MagicMock(side_effect=lambda: setattr(doc, "status", "enabled"))
+    doc.disable = MagicMock(side_effect=lambda: setattr(doc, "status", "disabled"))
+    doc.id = 123
     doc.user_id = None
     doc.title = "Test Document"
     doc.description = "Test description"
@@ -24,11 +23,9 @@ def make_mock_document(overrides: dict = None) -> MagicMock:
     doc.file_hash = "a" * 32
     doc.file_size = 1024
     doc.mime_type = "application/pdf"
-    doc.file_path = None
-    doc.status = "success"
-    doc.enabled = True
+    doc.status = "enabled"
     doc.processing_id = None
-    doc.processing_number = 1
+    doc.attempt_no = 1
     doc.chunk_count = 0
     doc.total_tokens = 0
     doc.embedding_model = None
@@ -37,9 +34,6 @@ def make_mock_document(overrides: dict = None) -> MagicMock:
     doc.language = "zh"
     doc.source_type = "upload"
     doc.rebuild_id = None
-    doc.created_at = datetime.now()
-    doc.updated_at = datetime.now()
-    doc.processed_at = None
     if overrides:
         for key, value in overrides.items():
             setattr(doc, key, value)
@@ -47,109 +41,91 @@ def make_mock_document(overrides: dict = None) -> MagicMock:
 
 
 def make_mock_processing(overrides: dict = None) -> MagicMock:
-    """创建 mock DocumentProcessingHistory 对象"""
     proc = MagicMock()
-    proc.id = f"proc_{uuid.uuid4().hex[:8]}"
-    proc.document_id = "doc_test"
-    proc.processing_number = 1
-    proc.status = "success"
-    proc.current_stage = "completed"
+    proc.id = 1
+    proc.document_id = 123
+    proc.processing_id = "proc_test12345"
+    proc.attempt_no = 1
+    proc.status = "succeeded"
+    proc.current_stage = "stored"
     proc.progress = 100
-    proc.started_at = datetime.now()
-    proc.completed_at = datetime.now()
+    proc.started_at = None
+    proc.completed_at = None
     proc.error_message = None
-    proc.result = {"chunks_count": 5, "vector_count": 5}
-    proc.stages = []
     if overrides:
         for key, value in overrides.items():
             setattr(proc, key, value)
     return proc
 
 
-class TestGetDocumentList:
-    """测试文档列表查询"""
+@pytest.fixture
+def service():
+    return DocumentService()
 
-    @pytest.fixture
-    def service(self):
-        return DocumentService()
+
+def _patch_repos(mock_doc_repo_class, mock_hist_repo_class):
+    """辅助: 创建 patched repository 实例"""
+    mock_doc_repo = MagicMock()
+    mock_hist_repo = MagicMock()
+    mock_doc_repo_class.return_value = mock_doc_repo
+    mock_hist_repo_class.return_value = mock_hist_repo
+    return mock_doc_repo, mock_hist_repo
+
+
+class TestGetDocumentList:
 
     @pytest.mark.asyncio
     async def test_empty_list(self, service):
         mock_db = AsyncMock()
-        mock_total_result = AsyncMock()
-        mock_total_result.scalar_one = MagicMock(return_value=0)
-        mock_list_result = AsyncMock()
-        mock_list_result.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))
+        with patch("knowlebase.admin.document.service.DocumentRepository") as mock_repo_cls:
+            mock_repo = MagicMock()
+            mock_repo.list_with_filters = AsyncMock(return_value=([], 0))
+            mock_repo_cls.return_value = mock_repo
 
-        call_count = 0
-
-        async def mock_execute(stmt):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return mock_total_result
-            return mock_list_result
-
-        mock_db.execute = mock_execute
-
-        result = await service.get_document_list(mock_db, DocumentListQuery())
-        assert result["documents"] == []
-        assert result["pagination"]["total"] == 0
+            result = await service.get_document_list(mock_db, DocumentListQuery())
+            assert result["documents"] == []
+            assert result["pagination"]["total"] == 0
 
     @pytest.mark.asyncio
     async def test_with_documents(self, service):
         mock_db = AsyncMock()
         doc = make_mock_document()
-        mock_total_result = AsyncMock()
-        mock_total_result.scalar_one = MagicMock(return_value=1)
-        mock_list_result = AsyncMock()
-        mock_list_result.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[doc])))
+        with patch("knowlebase.admin.document.service.DocumentRepository") as mock_repo_cls:
+            mock_repo = MagicMock()
+            mock_repo.list_with_filters = AsyncMock(return_value=([doc], 1))
+            mock_repo_cls.return_value = mock_repo
 
-        call_count = 0
-
-        async def mock_execute(stmt):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return mock_total_result
-            return mock_list_result
-
-        mock_db.execute = mock_execute
-
-        result = await service.get_document_list(mock_db, DocumentListQuery())
-        assert len(result["documents"]) == 1
-        assert result["pagination"]["total"] == 1
+            result = await service.get_document_list(mock_db, DocumentListQuery())
+            assert len(result["documents"]) == 1
+            assert result["pagination"]["total"] == 1
 
     @pytest.mark.asyncio
-    async def test_search_filter(self, service):
+    async def test_search_passed_to_repo(self, service):
         mock_db = AsyncMock()
-        mock_total_result = AsyncMock()
-        mock_total_result.scalar_one = MagicMock(return_value=0)
-        mock_list_result = AsyncMock()
-        mock_list_result.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))
+        with patch("knowlebase.admin.document.service.DocumentRepository") as mock_repo_cls:
+            mock_repo = MagicMock()
+            mock_repo.list_with_filters = AsyncMock(return_value=([], 0))
+            mock_repo_cls.return_value = mock_repo
 
-        call_count = 0
+            await service.get_document_list(mock_db, DocumentListQuery(search="test"))
+            call_args = mock_repo.list_with_filters.call_args
+            assert call_args[1]["search"] == "test"
 
-        async def mock_execute(stmt):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return mock_total_result
-            return mock_list_result
+    @pytest.mark.asyncio
+    async def test_status_filter_passed_to_repo(self, service):
+        mock_db = AsyncMock()
+        from knowlebase.schemas.document import DocumentStatus
+        with patch("knowlebase.admin.document.service.DocumentRepository") as mock_repo_cls:
+            mock_repo = MagicMock()
+            mock_repo.list_with_filters = AsyncMock(return_value=([], 0))
+            mock_repo_cls.return_value = mock_repo
 
-        mock_db.execute = mock_execute
-
-        await service.get_document_list(mock_db, DocumentListQuery(search="test"))
-        # 验证查询包含搜索条件 - 通过调用次数确认执行了
-        assert call_count == 2
+            await service.get_document_list(mock_db, DocumentListQuery(status=DocumentStatus.ENABLED))
+            call_args = mock_repo.list_with_filters.call_args
+            assert call_args[1]["status"] == "enabled"
 
 
 class TestGetDocumentDetail:
-    """测试文档详情查询"""
-
-    @pytest.fixture
-    def service(self):
-        return DocumentService()
 
     @pytest.mark.asyncio
     async def test_existing_document(self, service):
@@ -157,203 +133,186 @@ class TestGetDocumentDetail:
         doc = make_mock_document()
         proc = make_mock_processing()
 
-        doc_result = AsyncMock()
-        doc_result.scalar_one_or_none = MagicMock(return_value=doc)
-        proc_result = AsyncMock()
-        proc_result.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[proc])))
+        with (
+            patch("knowlebase.admin.document.service.DocumentRepository") as mock_doc_cls,
+            patch("knowlebase.admin.document.service.ProcessingHistoryRepository") as mock_hist_cls,
+        ):
+            mock_doc, mock_hist = _patch_repos(mock_doc_cls, mock_hist_cls)
+            mock_doc.get_by_id = AsyncMock(return_value=doc)
+            mock_hist.get_by_document_id = AsyncMock(return_value=[proc])
 
-        call_count = 0
-
-        async def mock_execute(stmt):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return doc_result
-            return proc_result
-
-        mock_db.execute = mock_execute
-
-        result = await service.get_document_detail(mock_db, "doc_test")
-        assert result is not None
-        assert "document" in result
-        assert "processing_history" in result
-        assert result["total_processings"] == 1
+            result = await service.get_document_detail(mock_db, "123")
+            assert result is not None
+            assert result["document"]["id"] == 123
+            assert result["total_processings"] == 1
+            assert len(result["processing_history"]) == 1
 
     @pytest.mark.asyncio
     async def test_nonexistent_document(self, service):
         mock_db = AsyncMock()
-        doc_result = AsyncMock()
-        doc_result.scalar_one_or_none = MagicMock(return_value=None)
-        mock_db.execute = mock_execute = AsyncMock(return_value=doc_result)
+        with patch("knowlebase.admin.document.service.DocumentRepository") as mock_doc_cls:
+            mock_doc_cls.return_value.get_by_id = AsyncMock(return_value=None)
 
-        result = await service.get_document_detail(mock_db, "doc_nonexistent")
-        assert result is None
+            result = await service.get_document_detail(mock_db, "999")
+            assert result is None
 
     @pytest.mark.asyncio
     async def test_document_without_history(self, service):
         mock_db = AsyncMock()
         doc = make_mock_document()
-        doc_result = AsyncMock()
-        doc_result.scalar_one_or_none = MagicMock(return_value=doc)
-        proc_result = AsyncMock()
-        proc_result.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))
+        with (
+            patch("knowlebase.admin.document.service.DocumentRepository") as mock_doc_cls,
+            patch("knowlebase.admin.document.service.ProcessingHistoryRepository") as mock_hist_cls,
+        ):
+            mock_doc, mock_hist = _patch_repos(mock_doc_cls, mock_hist_cls)
+            mock_doc.get_by_id = AsyncMock(return_value=doc)
+            mock_hist.get_by_document_id = AsyncMock(return_value=[])
 
-        call_count = 0
-
-        async def mock_execute(stmt):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return doc_result
-            return proc_result
-
-        mock_db.execute = mock_execute
-
-        result = await service.get_document_detail(mock_db, "doc_test")
-        assert result is not None
-        assert result["processing_history"] == []
-        assert result["total_processings"] == 0
+            result = await service.get_document_detail(mock_db, "123")
+            assert result is not None
+            assert result["processing_history"] == []
+            assert result["total_processings"] == 0
 
 
 class TestEnableDocument:
-    """测试启用文档"""
-
-    @pytest.fixture
-    def service(self):
-        return DocumentService()
 
     @pytest.mark.asyncio
-    async def test_enable_existing_document(self, service):
+    async def test_enable_disabled_document(self, service):
         mock_db = AsyncMock()
-        doc = make_mock_document(overrides={"enabled": False})
-        mock_db.get = AsyncMock(return_value=doc)
+        doc = make_mock_document(overrides={"status": "disabled"})
 
-        await service.enable_document(mock_db, doc.id)
-        assert doc.enabled is True
-        mock_db.commit.assert_awaited_once()
+        with patch("knowlebase.admin.document.service.DocumentRepository") as mock_repo_cls:
+            mock_repo_cls.return_value.get_by_id = AsyncMock(return_value=doc)
+
+            await service.enable_document(mock_db, "123")
+            assert doc.status == "enabled"
+            mock_db.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_enable_nonexistent_document(self, service):
         mock_db = AsyncMock()
-        mock_db.get = AsyncMock(return_value=None)
+        with patch("knowlebase.admin.document.service.DocumentRepository") as mock_repo_cls:
+            mock_repo_cls.return_value.get_by_id = AsyncMock(return_value=None)
 
-        with pytest.raises(HTTPException) as exc_info:
-            await service.enable_document(mock_db, "doc_nonexistent")
-        assert exc_info.value.status_code == 404
+            with pytest.raises(HTTPException) as exc_info:
+                await service.enable_document(mock_db, "999")
+            assert exc_info.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_enable_already_enabled(self, service):
+        mock_db = AsyncMock()
+        doc = make_mock_document(overrides={"status": "enabled"})
+
+        with patch("knowlebase.admin.document.service.DocumentRepository") as mock_repo_cls:
+            mock_repo_cls.return_value.get_by_id = AsyncMock(return_value=doc)
+
+            with pytest.raises(HTTPException) as exc_info:
+                await service.enable_document(mock_db, "123")
+            assert exc_info.value.status_code == 400
 
 
 class TestDisableDocument:
-    """测试停用文档"""
-
-    @pytest.fixture
-    def service(self):
-        return DocumentService()
 
     @pytest.mark.asyncio
-    async def test_disable_existing_document(self, service):
+    async def test_disable_enabled_document(self, service):
         mock_db = AsyncMock()
-        doc = make_mock_document(overrides={"enabled": True})
-        mock_db.get = AsyncMock(return_value=doc)
+        doc = make_mock_document(overrides={"status": "enabled"})
 
-        await service.disable_document(mock_db, doc.id)
-        assert doc.enabled is False
-        mock_db.commit.assert_awaited_once()
+        with patch("knowlebase.admin.document.service.DocumentRepository") as mock_repo_cls:
+            mock_repo_cls.return_value.get_by_id = AsyncMock(return_value=doc)
+
+            await service.disable_document(mock_db, "123")
+            assert doc.status == "disabled"
+            mock_db.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_disable_nonexistent_document(self, service):
         mock_db = AsyncMock()
-        mock_db.get = AsyncMock(return_value=None)
+        with patch("knowlebase.admin.document.service.DocumentRepository") as mock_repo_cls:
+            mock_repo_cls.return_value.get_by_id = AsyncMock(return_value=None)
 
-        with pytest.raises(HTTPException) as exc_info:
-            await service.disable_document(mock_db, "doc_nonexistent")
-        assert exc_info.value.status_code == 404
-
-
-class TestReprocessDocument:
-    """测试重新处理文档"""
-
-    @pytest.fixture
-    def service(self):
-        return DocumentService()
+            with pytest.raises(HTTPException) as exc_info:
+                await service.disable_document(mock_db, "999")
+            assert exc_info.value.status_code == 404
 
     @pytest.mark.asyncio
-    async def test_reprocess_new(self, service):
+    async def test_disable_already_disabled(self, service):
+        mock_db = AsyncMock()
+        doc = make_mock_document(overrides={"status": "disabled"})
+
+        with patch("knowlebase.admin.document.service.DocumentRepository") as mock_repo_cls:
+            mock_repo_cls.return_value.get_by_id = AsyncMock(return_value=doc)
+
+            with pytest.raises(HTTPException) as exc_info:
+                await service.disable_document(mock_db, "123")
+            assert exc_info.value.status_code == 400
+
+
+class TestProcessDocuments:
+
+    @pytest.mark.asyncio
+    async def test_process_single_document(self, service):
         mock_db = AsyncMock()
         doc = make_mock_document()
-        mock_db.get = AsyncMock(return_value=doc)
-
-        max_result = AsyncMock()
-        max_result.scalar_one = MagicMock(return_value=0)
-        mock_db.execute = AsyncMock(return_value=max_result)
         mock_db.commit = AsyncMock()
-        mock_db.refresh = AsyncMock()
+        mock_db.flush = AsyncMock()
 
-        result = await service.reprocess_document(mock_db, doc.id)
-        assert result["document_id"] == doc.id
-        assert result["processing_number"] == 1
-        assert "processing_id" in result
-        assert "progress_stream_url" in result
+        with (
+            patch("knowlebase.admin.document.service.DocumentRepository") as mock_doc_cls,
+            patch("knowlebase.admin.document.service.ProcessingHistoryRepository") as mock_hist_cls,
+        ):
+            mock_doc, mock_hist = _patch_repos(mock_doc_cls, mock_hist_cls)
+            mock_doc.get_by_id = AsyncMock(return_value=doc)
+            mock_hist.has_active_processing = AsyncMock(return_value=False)
+            mock_hist.get_max_attempt_no = AsyncMock(return_value=0)
+
+            results = await service.process_documents(mock_db, [123])
+            assert len(results) == 1
+            assert results[0].status == "success"
 
     @pytest.mark.asyncio
-    async def test_reprocess_with_history(self, service):
+    async def test_process_with_existing_history(self, service):
         mock_db = AsyncMock()
         doc = make_mock_document()
-        mock_db.get = AsyncMock(return_value=doc)
-
-        max_result = AsyncMock()
-        max_result.scalar_one = MagicMock(return_value=3)
-        mock_db.execute = AsyncMock(return_value=max_result)
         mock_db.commit = AsyncMock()
-        mock_db.refresh = AsyncMock()
+        mock_db.flush = AsyncMock()
 
-        result = await service.reprocess_document(mock_db, doc.id)
-        assert result["processing_number"] == 4
+        with (
+            patch("knowlebase.admin.document.service.DocumentRepository") as mock_doc_cls,
+            patch("knowlebase.admin.document.service.ProcessingHistoryRepository") as mock_hist_cls,
+        ):
+            mock_doc, mock_hist = _patch_repos(mock_doc_cls, mock_hist_cls)
+            mock_doc.get_by_id = AsyncMock(return_value=doc)
+            mock_hist.has_active_processing = AsyncMock(return_value=False)
+            mock_hist.get_max_attempt_no = AsyncMock(return_value=3)
+
+            results = await service.process_documents(mock_db, [5])
+            assert results[0].status == "success"
 
     @pytest.mark.asyncio
-    async def test_reprocess_nonexistent_document(self, service):
+    async def test_process_nonexistent_document(self, service):
         mock_db = AsyncMock()
-        mock_db.get = AsyncMock(return_value=None)
+        with patch("knowlebase.admin.document.service.DocumentRepository") as mock_repo_cls:
+            mock_repo_cls.return_value.get_by_id = AsyncMock(return_value=None)
 
-        with pytest.raises(HTTPException) as exc_info:
-            await service.reprocess_document(mock_db, "doc_nonexistent")
-        assert exc_info.value.status_code == 404
+            results = await service.process_documents(mock_db, [999])
+            assert results[0].status == "failed"
+            assert "不存在" in results[0].reason
 
     @pytest.mark.asyncio
-    async def test_reprocess_integer_id_returns_string(self, service):
-        """service 接收整数 document_id 时，返回的 document_id 必须是字符串"""
+    async def test_process_document_with_active_processing(self, service):
         mock_db = AsyncMock()
-        doc = make_mock_document()
-        doc.id = 18  # 模拟数据库自增 ID
-        mock_db.get = AsyncMock(return_value=doc)
-
-        max_result = AsyncMock()
-        max_result.scalar_one = MagicMock(return_value=0)
-        mock_db.execute = AsyncMock(return_value=max_result)
         mock_db.commit = AsyncMock()
-        mock_db.refresh = AsyncMock()
+        mock_db.flush = AsyncMock()
 
-        result = await service.reprocess_document(mock_db, 18)
-        assert isinstance(result["document_id"], str), f"document_id 应为 str, 实际是 {type(result['document_id']).__name__}"
-        assert result["document_id"] == "18"
+        with (
+            patch("knowlebase.admin.document.service.DocumentRepository") as mock_doc_cls,
+            patch("knowlebase.admin.document.service.ProcessingHistoryRepository") as mock_hist_cls,
+        ):
+            mock_doc, mock_hist = _patch_repos(mock_doc_cls, mock_hist_cls)
+            mock_doc.get_by_id = AsyncMock(return_value=make_mock_document())
+            mock_hist.has_active_processing = AsyncMock(return_value=True)
 
-    @pytest.mark.asyncio
-    async def test_reprocess_processing_document(self, service):
-        """文档正在处理中时抛出 HTTPException"""
-        mock_db = AsyncMock()
-        doc = make_mock_document(overrides={"status": "processing"})
-        mock_db.get = AsyncMock(return_value=doc)
-
-        with pytest.raises(HTTPException) as exc_info:
-            await service.reprocess_document(mock_db, 5)
-        assert exc_info.value.status_code == 400
-
-    @pytest.mark.asyncio
-    async def test_reprocess_deleted_document(self, service):
-        """已删除文档抛出 HTTPException"""
-        mock_db = AsyncMock()
-        doc = make_mock_document(overrides={"status": "deleted"})
-        mock_db.get = AsyncMock(return_value=doc)
-
-        with pytest.raises(HTTPException) as exc_info:
-            await service.reprocess_document(mock_db, 5)
-        assert exc_info.value.status_code == 400
+            results = await service.process_documents(mock_db, [5])
+            assert results[0].status == "failed"
+            assert "处理中" in results[0].reason

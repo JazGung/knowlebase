@@ -14,18 +14,15 @@ from pydantic import BaseModel, Field, validator, root_validator
 
 class DocumentStatus(str, Enum):
     """文档状态枚举"""
-    PENDING = "pending"
-    PROCESSING = "processing"
-    SUCCESS = "success"
-    FAILED = "failed"
-    DELETED = "deleted"
+    ENABLED = "enabled"
+    DISABLED = "disabled"
 
 
 class ProcessingStatus(str, Enum):
     """处理状态枚举"""
     PENDING = "pending"
     PROCESSING = "processing"
-    SUCCESS = "success"
+    SUCCEEDED = "succeeded"
     FAILED = "failed"
 
 
@@ -43,12 +40,11 @@ class FileCheckItem(BaseModel):
         """验证MD5哈希格式"""
         if not v or len(v) != 32:
             raise ValueError("MD5哈希必须是32位十六进制字符串")
-        # 验证十六进制格式
         try:
             int(v, 16)
         except ValueError:
             raise ValueError("MD5哈希必须是有效的十六进制字符串")
-        return v.lower()  # 统一转为小写
+        return v.lower()
 
     class Config:
         schema_extra = {
@@ -72,7 +68,6 @@ class FileCheckRequest(BaseModel):
         """验证文件列表"""
         if not v:
             raise ValueError("文件列表不能为空")
-        # 检查重复的文件名（相同文件名的不同哈希）
         filenames = [item.filename for item in v]
         if len(filenames) != len(set(filenames)):
             raise ValueError("文件名不能重复")
@@ -151,11 +146,9 @@ class DocumentUploadRequestMetadata(BaseModel):
     def validate_tags(cls, v):
         """验证标签格式"""
         if v:
-            # 检查标签是否包含逗号分隔符
             tags = [tag.strip() for tag in v.split(",") if tag.strip()]
             if not tags:
                 raise ValueError("标签不能为空")
-            # 检查每个标签的长度
             for tag in tags:
                 if len(tag) > 50:
                     raise ValueError(f"标签长度不能超过50个字符: {tag}")
@@ -175,7 +168,7 @@ class DocumentUploadResponse(BaseModel):
     file_size: int = Field(..., description="文件大小（字节）")
     status: str = Field(..., description="上传状态")
     processing_id: Optional[str] = Field(None, description="处理任务ID")
-    processing_number: int = Field(default=1, description="处理次数")
+    attempt_no: int = Field(default=1, description="处理次数")
     progress_stream_url: Optional[str] = Field(None, description="进度流URL")
 
     class Config:
@@ -188,7 +181,7 @@ class DocumentUploadResponse(BaseModel):
                 "file_size": 5242880,
                 "status": "success",
                 "processing_id": "proc_abcdef123456",
-                "processing_number": 1,
+                "attempt_no": 1,
                 "progress_stream_url": "/build/progress/stream?processing_id=proc_abcdef123456"
             }
         }
@@ -222,8 +215,7 @@ class DocumentListQuery(BaseModel):
     """
     page: int = Field(default=1, ge=1, description="页码")
     page_size: int = Field(default=20, ge=1, le=100, description="每页数量")
-    status: Optional[DocumentStatus] = Field(None, description="状态过滤")
-    enabled: Optional[bool] = Field(None, description="是否启用过滤")
+    status: Optional[DocumentStatus] = Field(None, description="启用状态过滤")
     category: Optional[str] = Field(None, description="分类过滤")
     search: Optional[str] = Field(None, description="关键字搜索")
     sort_by: str = Field(default="created_at", description="排序字段")
@@ -259,7 +251,7 @@ class DocumentDetail(BaseModel):
     file_size: Optional[int] = Field(None, description="文件大小（字节）")
     mime_type: Optional[str] = Field(None, description="文件MIME类型")
     file_hash: str = Field(..., description="文件MD5哈希值")
-    enabled: bool = Field(..., description="是否启用")
+    status: str = Field(..., description="启用状态：enabled/disabled")
     latest_processing_id: Optional[str] = Field(None, description="最新处理任务ID")
     rebuild_id: Optional[str] = Field(None, description="重建记录ID")
     created_by: Optional[str] = Field(None, description="创建者")
@@ -267,15 +259,13 @@ class DocumentDetail(BaseModel):
     updated_at: Optional[datetime] = Field(None, description="更新时间")
 
 
-class ProcessingStage(BaseModel):
+class ProcessingStageItem(BaseModel):
     """
     处理阶段详情
     """
-    stage: str = Field(..., description="阶段名称")
-    status: ProcessingStatus = Field(..., description="阶段状态")
-    progress: int = Field(..., ge=0, le=100, description="阶段进度（0-100）")
-    started_at: Optional[datetime] = Field(None, description="开始时间")
-    completed_at: Optional[datetime] = Field(None, description="完成时间")
+    stage_name: str = Field(..., description="阶段名称")
+    status: str = Field(..., description="阶段状态：running/succeeded/failed")
+    duration_ms: Optional[int] = Field(None, description="阶段耗时（毫秒）")
 
 
 class ProcessingHistoryItem(BaseModel):
@@ -283,15 +273,14 @@ class ProcessingHistoryItem(BaseModel):
     处理历史记录项
     """
     processing_id: str = Field(..., description="处理任务ID")
-    processing_number: int = Field(..., description="处理次数")
+    attempt_no: int = Field(..., description="处理次数")
     status: ProcessingStatus = Field(..., description="处理状态")
     current_stage: Optional[str] = Field(None, description="当前处理阶段")
     progress: int = Field(..., ge=0, le=100, description="处理进度（0-100）")
     started_at: Optional[datetime] = Field(None, description="开始时间")
     completed_at: Optional[datetime] = Field(None, description="完成时间")
     error_message: Optional[str] = Field(None, description="错误信息")
-    result: Optional[Dict[str, Any]] = Field(None, description="处理结果")
-    stage: Optional[List[ProcessingStage]] = Field(None, description="处理阶段列表")
+    stages: Optional[List[ProcessingStageItem]] = Field(None, description="处理阶段列表")
 
 
 class DocumentDetailResponse(BaseModel):
@@ -301,13 +290,6 @@ class DocumentDetailResponse(BaseModel):
     document: DocumentDetail = Field(..., description="文档详情")
     processing_history: List[ProcessingHistoryItem] = Field(..., description="处理历史记录")
     total_processings: int = Field(..., description="总处理次数")
-
-
-class EnableDisableDocumentRequest(BaseModel):
-    """
-    启用/停用文档请求模型
-    """
-    document_id: str = Field(..., description="文档ID")
 
 
 class ReprocessDocumentRequest(BaseModel):
@@ -324,59 +306,38 @@ class ReprocessDocumentResponse(BaseModel):
     """
     document_id: str = Field(..., description="文档ID")
     processing_id: str = Field(..., description="处理任务ID")
-    processing_number: int = Field(..., description="处理次数")
+    attempt_no: int = Field(..., description="处理次数")
     progress_stream_url: str = Field(..., description="进度流URL")
 
 
 class BaseResponse(BaseModel):
     """
-    基础响应模型
+    统一响应基类
 
-    所有API响应的基础结构
+    code: "000000" 为成功，"0xxxxx" 为警告码，"1xxxxx~9xxxxx" 为错误码
     """
-    code: int = Field(default=0, description="响应码，0表示成功")
-    message: str = Field(..., description="响应消息")
-    data: Optional[Union[Dict[str, Any], List[Any]]] = Field(None, description="响应数据")
+    code: str = Field(default="000000", description="响应码")
+    description: str = Field(default="成功", description="响应描述")
+    content: Optional[Dict[str, Any]] = Field(None, description="响应内容")
 
 
-class SuccessResponse(BaseResponse):
-    """
-    成功响应模型
-    """
-    code: int = Field(default=0, description="响应码，0表示成功")
+class BatchResult(BaseModel):
+    """批量操作单条结果"""
+    id: str = Field(..., description="记录ID")
+    status: str = Field(..., description="success/failed")
+    reason: Optional[str] = Field(None, description="失败原因")
 
 
-class ErrorResponse(BaseResponse):
-    """
-    错误响应模型
-    """
-    code: int = Field(..., ge=1, description="错误码，大于0表示错误")
-    detail: Optional[Dict[str, Any]] = Field(None, description="错误详情")
+class BatchResponse(BaseModel):
+    """批量操作响应内容"""
+    results: List[BatchResult] = Field(default_factory=list, description="批量操作结果列表")
 
 
-# 为各个API端点创建特定的响应模型
-class FileCheckSuccessResponse(SuccessResponse):
-    data: FileCheckResponse = Field(..., description="重复性校验结果")
+class EnableDisableDocumentRequest(BaseModel):
+    """启用/停用文档请求模型（批量）"""
+    document_ids: List[int] = Field(..., description="文档ID列表")
 
 
-class DocumentUploadSuccessResponse(SuccessResponse):
-    data: DocumentUploadResponse = Field(..., description="文档上传结果")
-
-
-class DocumentListSuccessResponse(SuccessResponse):
-    data: Dict[str, Any] = Field(..., description="文档列表结果")
-
-
-class DocumentDetailSuccessResponse(SuccessResponse):
-    data: DocumentDetailResponse = Field(..., description="文档详情结果")
-
-
-class ReprocessDocumentSuccessResponse(SuccessResponse):
-    data: ReprocessDocumentResponse = Field(..., description="重新处理结果")
-
-
-class IntegrityValidationErrorResponse(ErrorResponse):
-    """完整性验证错误响应"""
-    code: int = Field(default=400, description="错误码")
-    message: str = Field(default="上传文件不完整", description="错误消息")
-    detail: IntegrityValidationError = Field(..., description="完整性验证错误详情")
+class ProcessingTriggerRequest(BaseModel):
+    """触发处理请求模型（批量）"""
+    document_ids: List[int] = Field(..., description="文档ID列表")
