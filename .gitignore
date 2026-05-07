@@ -74,6 +74,7 @@ tmp/
 Thumbs.db
 CLAUDE.md
 .gitmodules
-.claude/
+.claude
 plantuml.jar
 .gitignore
+frontend/test-results/.last-run.json
