@@ -124,7 +124,7 @@ services:
   # 注意：Windows 下必须使用 named volume，因为 Neo4j 入口脚本会
   # 执行 chown -R neo4j:neo4j /var/lib/neo4j，对 bind mount 极其缓慢
   neo4j:
-    image: neo4j:5.15.0
+    image: neo4j:5.14.0
     container_name: knowlebase-neo4j
     environment:
       - NEO4J_AUTH=${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-knowlebase_password}
