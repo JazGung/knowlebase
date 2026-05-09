@@ -13,6 +13,7 @@ title: 文档管理
 | document | 文档元数据表 | A | 存储文档元数据 |
 | document_processing_history | 文档处理历史记录表 | A | 记录每次文档处理的详细历史 |
 | processing_stage_result | 处理阶段结果表 | A | 记录各处理阶段的中间结果元信息 |
+| document_chunk | 文档分块表 | A | 存储文档处理后的分块内容 |
 
 ### 1.1.2 document 表
 
@@ -34,7 +35,7 @@ title: 文档管理
 | processing_id | String(36) | Y | A | 当前处理任务ID |
 | attempt_no | Integer | N | A | 处理次数，>=1 |
 | chunk_count | Integer | N | A | 分块数量 |
-| total_tokens | Integer | N | A | 总token数量 |
+| total_token | Integer | N | A | 总token数量 |
 | embedding_model | String(50) | Y | A | 向量嵌入模型 |
 | category | String(100) | Y | A | 文档分类 |
 | tag | ARRAY(String) | Y | A | 文档标签数组 |
@@ -107,7 +108,34 @@ title: 文档管理
 | fk_stage_processing_id_ref_history | FK | processing_id → document_processing_history.processing_id | 关联处理记录 |
 | idx_stage_processing_id | INDEX | processing_id | 按处理任务ID查询阶段结果 |
 
-### 1.1.5 ER图
+### 1.1.5 document_chunk 表
+
+**表设计**
+
+| 列名 | 类型 | 非空性(Y/N) | 修改模式(A/M/D) | 备注 |
+| :--- | :--- | :--- | :--- | :--- |
+| id | BigInteger | N | A | 主键，自增 |
+| document_id | BigInteger | N | A | 关联 document.id |
+| chunk_index | Integer | N | A | 分块序号，从 0 递增 |
+| original_text | Text | N | A | 原始文本，调测用 |
+| processed_text | Text | N | A | 处理后文本 |
+| processed_text_token_count | Integer | N | A | processed_text 的 token 数 |
+| hypothetical_questions | JSONB | N | A | 假设性问题列表 |
+| hypothetical_questions_token_count | Integer | N | A | 拼接后文本的 token 数 |
+| relations | JSONB | N | A | 关系三元组列表 |
+| page_range_start | Integer | N | A | 起始页码 |
+| page_range_end | Integer | N | A | 结束页码 |
+| section_title | String(500) | N | A | 所属章节标题 |
+
+**表约束**
+
+| 约束名 | 类型 | 字段 | 说明 |
+| :--- | :--- | :--- | :--- |
+| pk_document_chunk | PK | id | 主键 |
+| fk_chunk_document_id_ref_document | FK | document_id → document.id | 关联文档 |
+| uk_document_chunk_index | UNIQUE | document_id, chunk_index | 同一文档分块序号唯一 |
+
+### 1.1.6 ER图
 
 ```plantuml
 @startuml
@@ -128,9 +156,15 @@ entity processing_stage_result {
     processing_id
 }
 
+entity document_chunk {
+    id
+    document_id
+}
+
 document ||--o{ document_processing_history : "document_id\n1:N"
 document_processing_history ||--o{ processing_stage_result : "processing_id\n1:N"
 document }o--|| document_processing_history : "processing_id\nN:1"
+document ||--o{ document_chunk : "document_id\n1:N"
 @enduml
 ```
 
@@ -143,6 +177,7 @@ document }o--|| document_processing_history : "processing_id\nN:1"
 | admin.document.domain.Document | document | 文档领域对象 |
 | admin.document.domain.DocumentProcessingHistory | document_processing_history | 处理历史领域对象 |
 | admin.document.domain.ProcessingStageResult | processing_stage_result | 阶段结果领域对象 |
+| admin.document.domain.DocumentChunk | document_chunk | 文档分块领域对象 |
 | admin.document.domain.ChunkResult | - | 分块结果数据类 |
 | admin.document.domain.ParseResult | - | 解析结果数据类 |
 
@@ -226,6 +261,24 @@ document }o--|| document_processing_history : "processing_id\nN:1"
 | image_elements | List[ParsedImage] | 图片元数据 |
 | table_elements | List[ParsedTable] | 表格数据 |
 
+### 2.2.6 DocumentChunk
+
+**字段映射**
+
+| 字段名 | 存储映射 | 备注 |
+| :--- | :--- | :--- |
+| id | id | 领域对象标识 |
+| document | document_id | 关联 Document，通过外键关联 |
+| chunk_index | chunk_index | 分块序号 |
+| original_text | original_text | 原始文本，调测用 |
+| processed_text | processed_text | 处理后文本 |
+| processed_text_token_count | processed_text_token_count | processed_text 的 token 数 |
+| hypothetical_questions | hypothetical_questions | 假设性问题列表 |
+| hypothetical_questions_token_count | hypothetical_questions_token_count | 拼接后文本的 token 数 |
+| relations | relations | 关系三元组列表 |
+| page_range | page_range_start, page_range_end | 页码范围 |
+| section_title | section_title | 所属章节标题 |
+
 ## 2.3 类图
 
 ```plantuml
@@ -233,6 +286,7 @@ document }o--|| document_processing_history : "processing_id\nN:1"
 class Document {
     +current_processing
     +histories
+    +chunks
 }
 
 class DocumentProcessingHistory {
@@ -243,11 +297,17 @@ class ProcessingStageResult {
     +processing
 }
 
+class DocumentChunk {
+    +document
+}
+
 Document "1" --> "1" DocumentProcessingHistory : current_processing
 Document "1" --> "*" DocumentProcessingHistory : histories
 DocumentProcessingHistory "*" --> "1" Document : document
 DocumentProcessingHistory "1" --> "*" ProcessingStageResult : stages
 ProcessingStageResult "*" --> "1" DocumentProcessingHistory : processing
+Document "1" --> "*" DocumentChunk : chunks
+DocumentChunk "*" --> "1" Document : document
 @enduml
 ```
 
@@ -708,23 +768,71 @@ ProcessingStageResult "*" --> "1" DocumentProcessingHistory : processing
 
 **输入**：List[ChunkResult]
 
+**字段写入策略**
+
+| 字段名 | 类型 | 写入数据库 | 备注 |
+| :--- | :--- | :--- | :--- |
+| original_text | str | — | 原始文本，调测用 |
+| processed_text | str | Elasticsearch、Milvus | 处理后文本 |
+| hypothetical_questions | List[str] | Milvus | 假设性问题列表（HyDE） |
+| relations | List[Tuple[str,str,str]] | Neo4j | 关系三元组 |
+| page_range | Tuple[int,int] | — | 页码范围 |
+| section_title | str | — | 所属章节标题 |
+
+以上所有字段均写入 PostgreSQL。ES、Milvus、Neo4j 仅标注其额外索引的字段。
+
+#### Elasticsearch 索引结构
+
+| 字段 | 类型 | 来源 | 说明 |
+| :--- | :--- | :--- | :--- |
+| chunk_id | VARCHAR | DB chunk.id | 关联 PostgreSQL |
+| document_id | VARCHAR | 上下文 | 按文档清理 |
+| keyword | text | ChunkResult.processed_text | 全文检索 |
+
+#### Milvus 向量结构
+
+| 字段 | 类型 | 来源 | 说明 |
+| :--- | :--- | :--- | :--- |
+| chunk_id | VARCHAR | DB chunk.id | 主键，关联 PostgreSQL |
+| document_id | VARCHAR | 上下文 | 按文档清理 |
+| vector | FloatVector | embedding(processed_text + "\n" + hypothetical_questions.join("\n")) | 语义检索 |
+
+#### Neo4j 图谱结构
+
+| 元素 | 属性 | 说明 |
+| :--- | :--- | :--- |
+| Document 节点 | `document_id` | 文档节点 |
+| Entity 节点 | `name` | 实体名称，跨文档共享 |
+| CONTAINS 关系 | — | Document → Entity |
+| {predicate} 关系 | `document_id`, `chunk_id` | Entity → Entity |
+
 **处理流程**
 
 1) 清理已有数据：
-   - 查询该 document_id 对应的已有向量数据（Milvus），存在则执行删除
-   - 查询该 document_id 对应的已有图数据（Neo4j），使用 Cypher 删除关联节点和关系
-   - 删除该 document_id 在数据库中的旧分块记录
-   - 清理失败记录 DEBUG 日志，不影响后续流程（旧数据残留由定时清理处理）
-2) 开启数据库事务：
-   - UPDATE document 设置 chunk_count, total_tokens, processed_at
+   - DELETE document_chunk WHERE document_id = ?
+   - DELETE ES 索引 WHERE document_id = ?
+   - DELETE Milvus 向量 WHERE document_id = ?
+   - Neo4j 删除：
+     a) MATCH (d:Document {document_id})-[:CONTAINS]->(:Entity) DELETE CONTAINS
+     b) MATCH ()-[r]->() WHERE r.document_id = ? DELETE r
+     c) MATCH (d:Document {document_id}) DELETE d
+     d) MATCH (e:Entity) WHERE NOT (e)<-[:CONTAINS]-() DELETE e
+2) 开启 PostgreSQL 事务：
+   - INSERT document_chunk（批量，遍历 ChunkResult 映射字段）
+   - UPDATE document 设置 chunk_count, total_token=sum(chunk.processed_text_token_count + chunk.hypothetical_questions_token_count), processed_at
    - UPDATE document_processing_history 设置 status='succeeded', progress=100, completed_at
    - INSERT processing_stage_result（stage='stored', status='succeeded', duration_ms）
-3) 提交事务，提交失败则回滚，更新处理历史状态为 'failed'，记录 ERROR 日志
-4) 将 ChunkResult 向量化后写入向量存储（Milvus），写入失败记录 DEBUG 日志
-5) 将 relations 三元组写入图数据库（Neo4j）：
-   - 使用 MERGE 进行节点去重
-   - 使用 CREATE 创建关系
-6) 存储写入失败不影响主流程，仅记录 DEBUG 日志
+   - COMMIT，提交失败则回滚，更新处理历史状态为 'failed'，记录 ERROR 日志
+3) ES 索引写入：对每个 chunk，bulk index {chunk_id, document_id, processed_text}
+4) Milvus 向量写入：对每个 chunk，拼接文本 → embedding → insert {chunk_id, document_id, vector}
+5) Neo4j 图谱写入：对每个三元组：
+   - MERGE (d:Document {document_id})
+   - MERGE (s:Entity {name: subject})
+   - MERGE (o:Entity {name: object})
+   - MERGE (d)-[:CONTAINS]->(s)
+   - MERGE (d)-[:CONTAINS]->(o)
+   - MERGE (s)-[:{predicate} {document_id, chunk_id}]->(o)
+6) 步骤 3/4/5 任一步失败：UPDATE processing_history（status='failed', error_message），记录 ERROR 日志。残留数据不立即清理，下次处理同一文档时由步骤 1 统一清理。
 
 **中间结果**：无（流水线终点）
 
