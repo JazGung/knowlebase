@@ -38,7 +38,7 @@ router = APIRouter()
     summary="文件重复性校验",
     tags=["文档管理"]
 )
-async def check_file_duplicates(
+async def check(
     request: FileCheckRequest,
     db: AsyncSession = Depends(get_db),
     upload_service: UploadService = Depends(get_upload_service)
@@ -47,14 +47,14 @@ async def check_file_duplicates(
     try:
         logger.info(f"重复性校验请求: {len(request.files)} 个文件")
 
-        duplicate_files = await upload_service.batch_check_duplicates(
+        duplicates = await upload_service.batch_check_duplicates(
             db,
             [{"filename": item.filename, "hash": item.hash} for item in request.files]
         )
 
         return BaseResponse(
             description="重复性校验完成",
-            content={"duplicate_files": duplicate_files}
+            content={"duplicates": duplicates}
         )
 
     except Exception as e:
@@ -71,13 +71,10 @@ async def check_file_duplicates(
     summary="单文件上传",
     tags=["文档管理"]
 )
-async def upload_document(
+async def upload(
     file: UploadFile = File(..., description="文件内容"),
     hash: str = Form(..., description="文件的MD5哈希值"),
     title: Optional[str] = Form(None, description="文档标题"),
-    description: Optional[str] = Form(None, description="文档描述"),
-    category: Optional[str] = Form(None, description="文档分类"),
-    tags: Optional[str] = Form(None, description="逗号分隔的标签"),
     db: AsyncSession = Depends(get_db),
     upload_service: UploadService = Depends(get_upload_service)
 ):
@@ -85,12 +82,7 @@ async def upload_document(
     try:
         logger.info(f"文件上传请求: {file.filename}, hash: {hash}")
 
-        metadata = {
-            "title": title,
-            "description": description,
-            "category": category,
-            "tag": tags
-        }
+        metadata = {"title": title}
 
         upload_result = await upload_service.process_upload(
             db=db,
@@ -119,11 +111,10 @@ async def upload_document(
     summary="文档列表分页查询",
     tags=["文档管理"]
 )
-async def get_document_list(
+async def query(
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(20, ge=1, le=100, description="每页数量"),
     status: Optional[str] = Query(None, description="启用状态过滤（enabled/disabled）"),
-    category: Optional[str] = Query(None, description="分类过滤"),
     search: Optional[str] = Query(None, description="关键字搜索"),
     sort_by: str = Query("created_at", description="排序字段"),
     order: str = Query("desc", description="排序方向"),
@@ -136,7 +127,6 @@ async def get_document_list(
             page=page,
             page_size=page_size,
             status=status,
-            category=category,
             search=search,
             sort_by=sort_by,
             order=order
@@ -163,7 +153,7 @@ async def get_document_list(
     summary="文档详情查询",
     tags=["文档管理"]
 )
-async def get_document_detail(
+async def detail(
     document_id: str = Query(..., description="文档ID"),
     db: AsyncSession = Depends(get_db),
     document_service: DocumentService = Depends(get_document_service)
@@ -197,7 +187,7 @@ async def get_document_detail(
     summary="文档启用",
     tags=["文档管理"]
 )
-async def enable_documents(
+async def enable(
     request: EnableDisableDocumentRequest,
     db: AsyncSession = Depends(get_db),
     document_service: DocumentService = Depends(get_document_service)
@@ -232,7 +222,7 @@ async def enable_documents(
     summary="文档停用",
     tags=["文档管理"]
 )
-async def disable_documents(
+async def disable(
     request: EnableDisableDocumentRequest,
     db: AsyncSession = Depends(get_db),
     document_service: DocumentService = Depends(get_document_service)
@@ -267,7 +257,7 @@ async def disable_documents(
     summary="文档处理",
     tags=["文档管理"]
 )
-async def process_documents(
+async def process(
     request: ProcessingTriggerRequest,
     db: AsyncSession = Depends(get_db),
     document_service: DocumentService = Depends(get_document_service)

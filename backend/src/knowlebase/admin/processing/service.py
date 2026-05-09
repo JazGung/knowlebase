@@ -36,7 +36,7 @@ from knowlebase.services.embedding_service import get_embedding_service
 from knowlebase.services.es_service import get_es_service
 from knowlebase.services.milvus_service import get_milvus_service
 from knowlebase.services.neo4j_service import get_neo4j_service
-from knowlebase.events import get_event_bus, StageCompletedEvent
+from knowlebase.events import get_event_bus, StageCompletedEvent, DocumentProcessingEvent
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +57,7 @@ class ProcessingService:
     ) -> Dict:
         """执行完整处理流水线"""
         event_bus = get_event_bus()
+        doc_event = DocumentProcessingEvent(event_bus)
         doc_repo = DocumentRepository(db)
         hist_repo = ProcessingHistoryRepository(db)
         stage_repo = StageResultRepository(db)
@@ -66,7 +67,7 @@ class ProcessingService:
             db=db, doc_repo=doc_repo, hist_repo=hist_repo, stage_repo=stage_repo,
             stage_name="check", progress=10,
             document_id=document_id, processing_id=processing_id,
-            attempt_no=attempt_no, event_bus=event_bus,
+            attempt_no=attempt_no, event_bus=event_bus, doc_event=doc_event,
             execute=lambda: self._check_document(db, doc_repo, hist_repo,
                                                   document_id, processing_id,
                                                   attempt_no, stage_repo),
@@ -80,7 +81,7 @@ class ProcessingService:
             db=db, doc_repo=doc_repo, hist_repo=hist_repo, stage_repo=stage_repo,
             stage_name="parsed", progress=30,
             document_id=document_id, processing_id=processing_id,
-            attempt_no=attempt_no, event_bus=event_bus,
+            attempt_no=attempt_no, event_bus=event_bus, doc_event=doc_event,
             execute=lambda: self._parse_document(db, hist_repo, stage_repo,
                                                   doc, file_hash, processing_id),
             write_result=True, result_stage_name="parsed",
@@ -93,7 +94,7 @@ class ProcessingService:
             db=db, doc_repo=doc_repo, hist_repo=hist_repo, stage_repo=stage_repo,
             stage_name="cleaned", progress=50,
             document_id=document_id, processing_id=processing_id,
-            attempt_no=attempt_no, event_bus=event_bus,
+            attempt_no=attempt_no, event_bus=event_bus, doc_event=doc_event,
             execute=lambda: self._clean_document(result, file_hash, processing_id),
             write_result=True, result_stage_name="cleaned",
         )
@@ -105,7 +106,7 @@ class ProcessingService:
             db=db, doc_repo=doc_repo, hist_repo=hist_repo, stage_repo=stage_repo,
             stage_name="images_described", progress=60,
             document_id=document_id, processing_id=processing_id,
-            attempt_no=attempt_no, event_bus=event_bus,
+            attempt_no=attempt_no, event_bus=event_bus, doc_event=doc_event,
             execute=lambda: replace_images_with_markers(result),
         )
         if result is None:
@@ -116,7 +117,7 @@ class ProcessingService:
             db=db, doc_repo=doc_repo, hist_repo=hist_repo, stage_repo=stage_repo,
             stage_name="chunked", progress=80,
             document_id=document_id, processing_id=processing_id,
-            attempt_no=attempt_no, event_bus=event_bus,
+            attempt_no=attempt_no, event_bus=event_bus, doc_event=doc_event,
             execute=lambda: self._chunk_document(result, doc, processing_id, file_hash),
             write_result=True, result_stage_name="chunked",
         )
@@ -128,7 +129,7 @@ class ProcessingService:
             db=db, doc_repo=doc_repo, hist_repo=hist_repo, stage_repo=stage_repo,
             stage_name="stored", progress=90,
             document_id=document_id, processing_id=processing_id,
-            attempt_no=attempt_no, event_bus=event_bus,
+            attempt_no=attempt_no, event_bus=event_bus, doc_event=doc_event,
             execute=lambda: self._store_results(db, doc_repo, hist_repo, stage_repo,
                                                  document_id, processing_id, result, chunks),
         )
@@ -151,6 +152,7 @@ class ProcessingService:
         processing_id: str,
         attempt_no: int,
         event_bus,
+        doc_event: DocumentProcessingEvent,
         execute: Callable,
         write_result: bool = False,
         result_stage_name: str | None = None,
@@ -180,10 +182,7 @@ class ProcessingService:
             await stage_repo.upsert(processing_id, stage_name, "succeeded", duration, result_path)
             await db.commit()
 
-            await event_bus.publish(StageCompletedEvent(
-                processing_id=processing_id, stage_name=stage_name,
-                status="succeeded", duration_ms=duration,
-            ))
+            await doc_event.stage_completed(processing_id, stage_name, duration)
 
             return result
 
@@ -200,10 +199,7 @@ class ProcessingService:
             )
             await db.commit()
 
-            await event_bus.publish(StageCompletedEvent(
-                processing_id=processing_id, stage_name=stage_name,
-                status="failed", duration_ms=duration, error_message=str(e),
-            ))
+            await doc_event.stage_failed(processing_id, stage_name, duration, str(e))
 
             return None
 
@@ -225,6 +221,18 @@ class ProcessingService:
         minio_svc = get_minio_service()
         if not minio_svc.file_exists(settings.minio_document_bucket, doc.file_hash):
             raise ValueError("文档文件不存在")
+
+        # 验证文件可读性
+        try:
+            obj = minio_svc.client.stat_object(
+                settings.minio_document_bucket, doc.file_hash
+            )
+            if obj.size == 0:
+                raise ValueError("文档文件为空")
+        except Exception as e:
+            if "文档文件为空" in str(e):
+                raise
+            raise ValueError(f"文档文件不可读: {e}")
 
         # 创建处理历史
         proc = await hist_repo.get_by_processing_id(processing_id)

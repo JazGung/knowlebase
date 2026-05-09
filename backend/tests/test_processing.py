@@ -6,6 +6,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from knowlebase.admin.processing.service import ProcessingService
+from knowlebase.events import DocumentProcessingEvent
 
 
 def _make_mock_repos(mock_doc_cls, mock_hist_cls, mock_stage_cls):
@@ -43,12 +44,13 @@ class TestRunStage:
             mock_bus = MagicMock()
             mock_bus.publish = AsyncMock()
             mock_eb.return_value = mock_bus
+            mock_doc_event = DocumentProcessingEvent(mock_bus)
 
             result = await service._run_stage(
                 db=mock_db, doc_repo=mock_doc, hist_repo=mock_hist, stage_repo=mock_stage,
                 stage_name="parsed", progress=30,
                 document_id=1, processing_id="proc_1",
-                attempt_no=1, event_bus=mock_bus,
+                attempt_no=1, event_bus=mock_bus, doc_event=mock_doc_event,
                 execute=lambda: "stage_output",
                 write_result=True, result_stage_name="parsed",
             )
@@ -80,12 +82,13 @@ class TestRunStage:
             mock_stage.upsert = AsyncMock()
             mock_bus = MagicMock()
             mock_bus.publish = AsyncMock()
+            mock_doc_event = DocumentProcessingEvent(mock_bus)
 
             result = await service._run_stage(
                 db=mock_db, doc_repo=mock_doc, hist_repo=mock_hist, stage_repo=mock_stage,
                 stage_name="parsed", progress=30,
                 document_id=1, processing_id="proc_1",
-                attempt_no=1, event_bus=mock_bus,
+                attempt_no=1, event_bus=mock_bus, doc_event=mock_doc_event,
                 execute=lambda: (_ for _ in ()).throw(ValueError("测试异常")),
             )
 

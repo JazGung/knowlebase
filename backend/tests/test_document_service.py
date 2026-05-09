@@ -18,7 +18,6 @@ def make_mock_document(overrides: dict = None) -> MagicMock:
     doc.id = 123
     doc.user_id = None
     doc.title = "Test Document"
-    doc.description = "Test description"
     doc.original_filename = "test.pdf"
     doc.file_hash = "a" * 32
     doc.file_size = 1024
@@ -29,8 +28,6 @@ def make_mock_document(overrides: dict = None) -> MagicMock:
     doc.chunk_count = 0
     doc.total_token = 0
     doc.embedding_model = None
-    doc.category = None
-    doc.tag = []
     doc.language = "zh"
     doc.source_type = "upload"
     doc.rebuild_id = None
@@ -83,8 +80,8 @@ class TestGetDocumentList:
             mock_repo_cls.return_value = mock_repo
 
             result = await service.get_document_list(mock_db, DocumentListQuery())
-            assert result["documents"] == []
-            assert result["pagination"]["total"] == 0
+            assert result["data"] == []
+            assert result["total"] == 0
 
     @pytest.mark.asyncio
     async def test_with_documents(self, service):
@@ -96,8 +93,8 @@ class TestGetDocumentList:
             mock_repo_cls.return_value = mock_repo
 
             result = await service.get_document_list(mock_db, DocumentListQuery())
-            assert len(result["documents"]) == 1
-            assert result["pagination"]["total"] == 1
+            assert len(result["data"]) == 1
+            assert result["total"] == 1
 
     @pytest.mark.asyncio
     async def test_search_passed_to_repo(self, service):

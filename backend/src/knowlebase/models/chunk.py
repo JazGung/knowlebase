@@ -111,13 +111,6 @@ class DocumentChunk(Base):
         comment="所属章节标题"
     )
 
-    created_at = Column(
-        TIMESTAMP(timezone=True),
-        nullable=False,
-        server_default=func.current_timestamp(),
-        comment="创建时间"
-    )
-
     # 关系
     document = relationship("Document", back_populates="chunks", lazy="selectin")
 
@@ -149,7 +142,6 @@ class DocumentChunk(Base):
             "page_range_start": self.page_range_start,
             "page_range_end": self.page_range_end,
             "section_title": self.section_title,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 
     def __repr__(self):

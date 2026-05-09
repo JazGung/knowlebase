@@ -101,7 +101,6 @@ class User(Base):
     )
 
     # 关系
-    document = relationship("Document", back_populates="user", cascade="all, delete-orphan", lazy="selectin")
     search_history = relationship("SearchHistory", back_populates="user", cascade="all, delete-orphan", lazy="selectin")
 
     # 约束

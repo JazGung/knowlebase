@@ -214,7 +214,7 @@ class TestProcessUpload:
         assert result["status"] == "success"
         assert result["file_hash"] == file_hash
         assert "document_id" in result
-        assert "processing_id" in result
+        assert "original_filename" in result
         service.minio_service.upload_file.assert_called_once()
 
     @pytest.mark.asyncio

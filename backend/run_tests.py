@@ -338,7 +338,7 @@ async def run_document_service_tests():
         return mock_total if cc == 1 else mock_list
     mock_db.execute = mock_exec
     result = await service.get_document_list(mock_db, DocumentListQuery())
-    check(result["documents"] == [] and result["pagination"]["total"] == 0, "get_document_list empty")
+    check(result["data"] == [] and result["total"] == 0, "get_document_list empty")
 
     # Nonexistent document
     mock_db2 = AsyncMock()

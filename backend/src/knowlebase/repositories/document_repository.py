@@ -49,7 +49,6 @@ class DocumentRepository:
         page: int = 1,
         page_size: int = 20,
         status: Optional[str] = None,
-        category: Optional[str] = None,
         search: Optional[str] = None,
         sort_by: str = "created_at",
         order: str = "desc",
@@ -59,15 +58,12 @@ class DocumentRepository:
 
         if status:
             query = query.where(Document.status == status)
-        if category:
-            query = query.where(Document.category == category)
         if search:
             search_pattern = f"%{search}%"
             query = query.where(
                 or_(
                     Document.original_filename.ilike(search_pattern),
                     Document.title.ilike(search_pattern),
-                    Document.description.ilike(search_pattern),
                 )
             )
 
@@ -82,7 +78,6 @@ class DocumentRepository:
             "updated_at": Document.updated_at,
             "file_size": Document.file_size,
             "title": Document.title,
-            "category": Document.category,
         }
         order_col = sort_columns.get(sort_by, Document.created_at)
         if order == "asc":

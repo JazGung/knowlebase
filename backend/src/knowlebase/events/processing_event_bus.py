@@ -85,6 +85,35 @@ class ProcessingEventBus:
         return len(self._subscribers)
 
 
+class DocumentProcessingEvent:
+    """文档处理事件接口
+
+    处理流水线各阶段完成后调用对应方法。
+    各方法内部创建 StageCompletedEvent 消息体，委托 ProcessingEventBus 分发。
+    """
+
+    def __init__(self, event_bus: ProcessingEventBus):
+        self._bus = event_bus
+
+    async def stage_completed(
+        self, processing_id: str, stage_name: str, duration_ms: int
+    ) -> None:
+        await self._bus.publish(StageCompletedEvent(
+            processing_id=processing_id, stage_name=stage_name,
+            status="succeeded", duration_ms=duration_ms,
+        ))
+
+    async def stage_failed(
+        self, processing_id: str, stage_name: str,
+        duration_ms: int, error_message: str,
+    ) -> None:
+        await self._bus.publish(StageCompletedEvent(
+            processing_id=processing_id, stage_name=stage_name,
+            status="failed", duration_ms=duration_ms,
+            error_message=error_message,
+        ))
+
+
 # 模块级单例
 _event_bus: ProcessingEventBus | None = None
 

@@ -143,14 +143,9 @@ class UploadService:
         if existing:
             return {
                 "document_id": str(existing.id),
-                "filename": existing.file_hash,
                 "original_filename": existing.original_filename,
                 "file_hash": existing.file_hash,
-                "file_size": existing.file_size,
                 "status": "duplicate",
-                "processing_id": None,
-                "attempt_no": 1,
-                "progress_stream_url": None,
             }
 
         # 4. 存储 + 入库
@@ -191,17 +186,10 @@ class UploadService:
             )
 
         processing_id = f"proc_{uuid.uuid4().hex[:12]}"
-        tags_str = metadata.get("tags")
-        tags_list = None
-        if tags_str and isinstance(tags_str, str):
-            tags_list = [t.strip() for t in tags_str.split(",") if t.strip()]
 
         doc = Document(
             original_filename=original_filename,
             title=metadata.get("title") or original_filename,
-            description=metadata.get("description"),
-            category=metadata.get("category"),
-            tag=tags_list,
             mime_type="application/octet-stream",
             file_size=file_size,
             file_hash=file_hash,
@@ -222,14 +210,9 @@ class UploadService:
 
             return {
                 "document_id": str(doc.id),
-                "filename": file_hash,
                 "original_filename": original_filename,
                 "file_hash": file_hash,
-                "file_size": file_size,
                 "status": "success",
-                "processing_id": processing_id,
-                "attempt_no": 1,
-                "progress_stream_url": f"/build/progress/stream?processing_id={processing_id}",
             }
 
         except Exception as e:
@@ -284,7 +267,6 @@ class DocumentService:
             page=query_params.page,
             page_size=query_params.page_size,
             status=query_params.status.value if query_params.status else None,
-            category=query_params.category,
             search=query_params.search,
             sort_by=query_params.sort_by,
             order=query_params.order,
@@ -295,9 +277,6 @@ class DocumentService:
             "filename": d.file_hash,
             "original_filename": d.original_filename,
             "title": d.title,
-            "description": d.description,
-            "category": d.category,
-            "tag": d.tag or [],
             "file_size": d.file_size,
             "mime_type": d.mime_type,
             "file_hash": d.file_hash,
@@ -308,13 +287,11 @@ class DocumentService:
         } for d in documents]
 
         return {
-            "documents": doc_list,
-            "pagination": {
-                "page": query_params.page,
-                "page_size": query_params.page_size,
-                "total": total,
-                "total_pages": (total + query_params.page_size - 1) // query_params.page_size,
-            },
+            "data": doc_list,
+            "total": total,
+            "page": query_params.page,
+            "page_size": query_params.page_size,
+            "total_pages": (total + query_params.page_size - 1) // query_params.page_size,
         }
 
     async def get_document_detail(self, db: AsyncSession, document_id: str) -> Optional[Dict]:
@@ -333,9 +310,6 @@ class DocumentService:
                 "filename": doc.file_hash,
                 "original_filename": doc.original_filename,
                 "title": doc.title,
-                "description": doc.description,
-                "category": doc.category,
-                "tags": doc.tag or [],
                 "file_size": doc.file_size,
                 "mime_type": doc.mime_type,
                 "file_hash": doc.file_hash,
@@ -347,7 +321,7 @@ class DocumentService:
                 "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
             },
             "processing_history": [{
-                "processing_id": p.id,
+                "processing_id": p.processing_id,
                 "attempt_no": p.attempt_no,
                 "status": p.status,
                 "current_stage": p.current_stage,

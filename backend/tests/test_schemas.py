@@ -108,19 +108,6 @@ class TestDocumentUploadRequestMetadata:
     def test_all_fields_none(self):
         meta = DocumentUploadRequestMetadata()
         assert meta.title is None
-        assert meta.tags is None
-
-    def test_valid_tags(self):
-        meta = DocumentUploadRequestMetadata(tags="python, fastapi, test")
-        assert meta.tags == "python, fastapi, test"
-
-    def test_tag_too_long_raises_error(self):
-        with pytest.raises(ValidationError):
-            DocumentUploadRequestMetadata(tags="a" * 51)
-
-    def test_empty_tags_after_strip_raises_error(self):
-        with pytest.raises(ValidationError):
-            DocumentUploadRequestMetadata(tags=" , , ")
 
 
 class TestDocumentListQuery:

@@ -116,12 +116,12 @@ class FileCheckResponse(BaseModel):
     """
     重复性校验响应模型
     """
-    duplicate_files: List[DuplicateFileInfo] = Field(..., description="重复文件列表")
+    duplicates: List[DuplicateFileInfo] = Field(..., description="重复文件列表")
 
     class Config:
         schema_extra = {
             "example": {
-                "duplicate_files": [
+                "duplicates": [
                     {
                         "filename": "文档1.pdf",
                         "hash": "a1b2c3d4e5f678901234567890123456",
@@ -138,21 +138,6 @@ class DocumentUploadRequestMetadata(BaseModel):
     文档上传元数据
     """
     title: Optional[str] = Field(None, description="文档标题")
-    description: Optional[str] = Field(None, description="文档描述")
-    category: Optional[str] = Field(None, description="文档分类")
-    tags: Optional[str] = Field(None, description="逗号分隔的标签")
-
-    @validator("tags")
-    def validate_tags(cls, v):
-        """验证标签格式"""
-        if v:
-            tags = [tag.strip() for tag in v.split(",") if tag.strip()]
-            if not tags:
-                raise ValueError("标签不能为空")
-            for tag in tags:
-                if len(tag) > 50:
-                    raise ValueError(f"标签长度不能超过50个字符: {tag}")
-        return v
 
 
 class DocumentUploadResponse(BaseModel):
@@ -162,27 +147,17 @@ class DocumentUploadResponse(BaseModel):
     用于 `/build/document/upload` 接口的成功响应
     """
     document_id: str = Field(..., description="文档ID")
-    filename: str = Field(..., description="存储文件名（MD5哈希）")
     original_filename: str = Field(..., description="原始文件名")
     file_hash: str = Field(..., description="文件MD5哈希值")
-    file_size: int = Field(..., description="文件大小（字节）")
     status: str = Field(..., description="上传状态")
-    processing_id: Optional[str] = Field(None, description="处理任务ID")
-    attempt_no: int = Field(default=1, description="处理次数")
-    progress_stream_url: Optional[str] = Field(None, description="进度流URL")
 
     class Config:
         schema_extra = {
             "example": {
                 "document_id": "doc_1234567890",
-                "filename": "a1b2c3d4e5f678901234567890123456",
                 "original_filename": "API设计文档.pdf",
                 "file_hash": "a1b2c3d4e5f678901234567890123456",
-                "file_size": 5242880,
-                "status": "success",
-                "processing_id": "proc_abcdef123456",
-                "attempt_no": 1,
-                "progress_stream_url": "/build/progress/stream?processing_id=proc_abcdef123456"
+                "status": "success"
             }
         }
 
@@ -216,7 +191,6 @@ class DocumentListQuery(BaseModel):
     page: int = Field(default=1, ge=1, description="页码")
     page_size: int = Field(default=20, ge=1, le=100, description="每页数量")
     status: Optional[DocumentStatus] = Field(None, description="启用状态过滤")
-    category: Optional[str] = Field(None, description="分类过滤")
     search: Optional[str] = Field(None, description="关键字搜索")
     sort_by: str = Field(default="created_at", description="排序字段")
     order: str = Field(default="desc", description="排序方向")
@@ -231,7 +205,7 @@ class DocumentListQuery(BaseModel):
     @validator("sort_by")
     def validate_sort_by(cls, v):
         """验证排序字段"""
-        valid_fields = ["created_at", "updated_at", "file_size", "title", "category"]
+        valid_fields = ["created_at", "updated_at", "file_size", "title"]
         if v not in valid_fields:
             raise ValueError(f"排序字段必须是以下值之一: {', '.join(valid_fields)}")
         return v
@@ -245,9 +219,6 @@ class DocumentDetail(BaseModel):
     filename: str = Field(..., description="存储文件名")
     original_filename: str = Field(..., description="原始文件名")
     title: Optional[str] = Field(None, description="文档标题")
-    description: Optional[str] = Field(None, description="文档描述")
-    category: Optional[str] = Field(None, description="文档分类")
-    tag: Optional[List[str]] = Field(None, description="文档标签列表")
     file_size: Optional[int] = Field(None, description="文件大小（字节）")
     mime_type: Optional[str] = Field(None, description="文件MIME类型")
     file_hash: str = Field(..., description="文件MD5哈希值")
@@ -307,7 +278,6 @@ class ReprocessDocumentResponse(BaseModel):
     document_id: str = Field(..., description="文档ID")
     processing_id: str = Field(..., description="处理任务ID")
     attempt_no: int = Field(..., description="处理次数")
-    progress_stream_url: str = Field(..., description="进度流URL")
 
 
 class BaseResponse(BaseModel):

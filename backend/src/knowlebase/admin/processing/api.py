@@ -28,7 +28,7 @@ router = APIRouter()
     summary="处理状态查询",
     tags=["文档处理"]
 )
-async def get_processing_status(
+async def status(
     processing_id: str,
     db: AsyncSession = Depends(get_db),
     processing_svc: ProcessingService = Depends(get_processing_service),
@@ -62,7 +62,7 @@ async def get_processing_status(
     summary="阶段结果详情",
     tags=["文档处理"]
 )
-async def get_stage_result(
+async def stage_result(
     processing_id: str,
     stage_name: str,
     db: AsyncSession = Depends(get_db),
@@ -97,7 +97,7 @@ async def get_stage_result(
     summary="处理过程视图",
     tags=["文档处理"]
 )
-async def get_processing_view(
+async def view(
     document_ids: str = Query(..., description="逗号分隔的文档ID列表"),
     db: AsyncSession = Depends(get_db),
     processing_svc: ProcessingService = Depends(get_processing_service),
@@ -131,7 +131,7 @@ async def get_processing_view(
     summary="处理进度 SSE 流",
     tags=["文档处理"]
 )
-async def stream_processing_progress(
+async def stream(
     processing_id: str,
     request: Request,
 ):

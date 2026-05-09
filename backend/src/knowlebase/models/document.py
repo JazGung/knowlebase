@@ -22,7 +22,7 @@ from sqlalchemy import (
     CheckConstraint,
     Index,
 )
-from sqlalchemy.dialects.postgresql import UUID, ARRAY
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship, validates
 
@@ -47,10 +47,9 @@ class Document(Base):
         comment="文档唯一标识"
     )
 
-    # 用户关联（未来扩展）
+    # 用户关联（跨模块，仅存ID值，无外键）
     user_id = Column(
         BigInteger,
-        ForeignKey("user.id"),
         nullable=True,
         comment="上传用户ID"
     )
@@ -60,11 +59,6 @@ class Document(Base):
         String(500),
         nullable=False,
         comment="文档标题"
-    )
-    description = Column(
-        Text,
-        nullable=True,
-        comment="文档描述"
     )
 
     # 文件信息
@@ -136,17 +130,6 @@ class Document(Base):
     )
 
     # 元数据
-    category = Column(
-        String(100),
-        nullable=True,
-        comment="文档分类"
-    )
-    tag = Column(
-        ARRAY(String),
-        nullable=True,
-        default=[],
-        comment="文档标签数组"
-    )
     language = Column(
         String(10),
         nullable=False,
@@ -188,7 +171,6 @@ class Document(Base):
     )
 
     # 关系
-    user = relationship("User", back_populates="document", lazy="selectin")
     chunks = relationship("DocumentChunk", back_populates="document", cascade="all, delete-orphan", lazy="selectin")
     processing_history = relationship(
         "DocumentProcessingHistory",
@@ -214,8 +196,6 @@ class Document(Base):
         ),
         Index("idx_documents_file_hash", "file_hash", unique=True),
         Index("idx_documents_created_at", "created_at"),
-        Index("idx_documents_category", "category"),
-        Index("idx_document_tag", "tag", postgresql_using="gin"),
         {"comment": "文档元数据表"}
     )
 
@@ -243,7 +223,6 @@ class Document(Base):
         result = {
             "id": str(self.id),
             "title": self.title,
-            "description": self.description,
             "original_filename": self.original_filename,
             "file_hash": self.file_hash,
             "file_size": self.file_size,
@@ -254,8 +233,6 @@ class Document(Base):
             "chunk_count": self.chunk_count,
             "total_token": self.total_token,
             "embedding_model": self.embedding_model,
-            "category": self.category,
-            "tag": self.tag or [],
             "language": self.language,
             "source_type": self.source_type,
             "rebuild_id": self.rebuild_id,

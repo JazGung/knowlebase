@@ -7,11 +7,13 @@
 from knowlebase.events.processing_event_bus import (
     StageCompletedEvent,
     ProcessingEventBus,
+    DocumentProcessingEvent,
     get_event_bus,
 )
 
 __all__ = [
     "StageCompletedEvent",
     "ProcessingEventBus",
+    "DocumentProcessingEvent",
     "get_event_bus",
 ]
