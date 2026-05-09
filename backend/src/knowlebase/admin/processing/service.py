@@ -8,20 +8,23 @@
 
 import json
 import logging
+import re
 import time
 from dataclasses import asdict
 from datetime import datetime
-from typing import Dict, List, Optional, Callable, Any
+from typing import Dict, List, Optional, Callable, Any, Tuple
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from knowlebase.core.config import settings
 from knowlebase.models.document import Document, DocumentProcessingHistory
 from knowlebase.models.processing_stage_result import ProcessingStageResult
+from knowlebase.models.chunk import DocumentChunk
 from knowlebase.repositories import (
     DocumentRepository,
     ProcessingHistoryRepository,
     StageResultRepository,
+    DocumentChunkRepository,
 )
 from knowlebase.parsers import parse_document
 from knowlebase.parsers.base import ParseResult
@@ -29,6 +32,10 @@ from knowlebase.cleaners import clean_document
 from knowlebase.chunker import chunk_document
 from knowlebase.chunker.image_describer import replace_images_with_markers
 from knowlebase.services.minio_service import get_minio_service, MinioService
+from knowlebase.services.embedding_service import get_embedding_service
+from knowlebase.services.es_service import get_es_service
+from knowlebase.services.milvus_service import get_milvus_service
+from knowlebase.services.neo4j_service import get_neo4j_service
 from knowlebase.events import get_event_bus, StageCompletedEvent
 
 logger = logging.getLogger(__name__)
@@ -273,16 +280,165 @@ class ProcessingService:
         document_id: int, processing_id: str,
         result: ParseResult, chunks: list,
     ) -> Dict:
-        """4.10.10 数据入库"""
+        """4.10.10 数据入库 — 6 步处理流程
+
+        1. 清理已有数据（PG/ES/Milvus/Neo4j）
+        2. PostgreSQL 事务写入（chunk + document + history + commit）
+        3. ES 索引写入
+        4. Milvus 向量写入
+        5. Neo4j 图谱写入
+        6. 步骤 3/4/5 失败处理：标记 history failed，残留数据不清
+        """
         doc = await doc_repo.get_by_id(document_id)
-        doc.processed_at = datetime.now()
-        doc.processing_id = processing_id
-        doc.chunk_count = len(chunks)
+        document_id_str = str(document_id)
 
-        proc = await hist_repo.get_by_processing_id(processing_id)
-        proc.mark_succeeded()
+        embedding_svc = get_embedding_service()
+        es_svc = get_es_service()
+        milvus_svc = get_milvus_service()
+        neo4j_svc = get_neo4j_service()
+        chunk_repo = DocumentChunkRepository(db)
 
-        logger.info(f"文档处理完成: {doc.original_filename}")
+        # ---- Step 1: 清理已有数据 ----
+        try:
+            await chunk_repo.delete_by_document_id(document_id)
+            await db.commit()
+        except Exception as e:
+            logger.warning(f"清理旧 document_chunk 失败: {e}")
+
+        try:
+            await es_svc.delete_by_document_id(document_id_str)
+        except Exception as e:
+            logger.warning(f"清理旧 ES 数据失败: {e}")
+
+        try:
+            milvus_svc.delete_by_document_id(document_id_str)
+        except Exception as e:
+            logger.warning(f"清理旧 Milvus 数据失败: {e}")
+
+        try:
+            await neo4j_svc.delete_by_document_id(document_id_str)
+        except Exception as e:
+            logger.warning(f"清理旧 Neo4j 数据失败: {e}")
+
+        # ---- Step 2: PostgreSQL 事务写入 ----
+        db_chunks: list = []
+        total_token = 0
+
+        try:
+            for i, chunk in enumerate(chunks):
+                processed_text_token_count = embedding_svc.count_tokens(
+                    chunk.processed_text or ""
+                )
+                hq_text = "\n".join(chunk.hypothetical_questions or [])
+                hq_token_count = embedding_svc.count_tokens(hq_text) if hq_text else 0
+
+                page_start, page_end = self._parse_page_range(chunk.page_range)
+
+                relations_json = []
+                for rel in (chunk.relations or []):
+                    relations_json.append({
+                        "source": rel.source,
+                        "relationship": rel.relationship,
+                        "target": rel.target,
+                    })
+
+                db_chunk = DocumentChunk(
+                    document_id=document_id,
+                    chunk_index=i,
+                    original_text=chunk.original_text or "",
+                    processed_text=chunk.processed_text or "",
+                    processed_text_token_count=processed_text_token_count,
+                    hypothetical_questions=chunk.hypothetical_questions or [],
+                    hypothetical_questions_token_count=hq_token_count,
+                    relations=relations_json,
+                    page_range_start=page_start,
+                    page_range_end=page_end,
+                    section_title=chunk.section_title or "",
+                )
+                db_chunks.append(db_chunk)
+                total_token += processed_text_token_count + hq_token_count
+
+            await chunk_repo.bulk_insert(db_chunks)
+
+            doc.processed_at = datetime.now()
+            doc.chunk_count = len(chunks)
+            doc.total_token = total_token
+            doc.embedding_model = settings.embedding_model
+
+            proc = await hist_repo.get_by_processing_id(processing_id)
+            proc.mark_succeeded()
+
+            await db.commit()
+            logger.info(f"PostgreSQL 写入成功: document_id={document_id}, chunks={len(chunks)}")
+        except Exception as e:
+            await db.rollback()
+            logger.error(f"PostgreSQL 事务写入失败: {e}", exc_info=True)
+            await self._mark_history_failed(hist_repo, processing_id, str(e))
+            return {"status": "failed", "error": str(e)}
+
+        # ---- 组装外部存储数据 ----
+        es_entries = []
+        milvus_entries = []
+        neo4j_relations = []
+
+        for chunk, db_chunk in zip(chunks, db_chunks):
+            chunk_id = str(db_chunk.id)
+            es_entries.append({
+                "chunk_id": chunk_id,
+                "document_id": document_id_str,
+                "processed_text": chunk.processed_text or "",
+            })
+            embed_text = chunk.processed_text or ""
+            hq = chunk.hypothetical_questions or []
+            if hq:
+                embed_text += "\n" + "\n".join(hq)
+            milvus_entries.append({
+                "chunk_id": chunk_id,
+                "document_id": document_id_str,
+                "text": embed_text,
+            })
+            for rel in (chunk.relations or []):
+                neo4j_relations.append({
+                    "source": rel.source,
+                    "relationship": rel.relationship,
+                    "target": rel.target,
+                    "chunk_id": chunk_id,
+                })
+
+        # ---- Step 3: ES 索引写入 ----
+        external_error: str | None = None
+        try:
+            await es_svc.index_chunks(es_entries)
+        except Exception as e:
+            logger.error(f"ES 写入失败: {e}", exc_info=True)
+            external_error = f"ES 写入失败: {e}"
+
+        # ---- Step 4: Milvus 向量写入 ----
+        if external_error is None:
+            try:
+                texts = [e["text"] for e in milvus_entries]
+                vectors = embedding_svc.encode(texts)
+                for entry, vec in zip(milvus_entries, vectors):
+                    entry["vector"] = vec
+                milvus_svc.insert_vectors(milvus_entries)
+            except Exception as e:
+                logger.error(f"Milvus 写入失败: {e}", exc_info=True)
+                external_error = f"Milvus 写入失败: {e}"
+
+        # ---- Step 5: Neo4j 图谱写入 ----
+        if external_error is None:
+            try:
+                await neo4j_svc.write_graph(document_id_str, neo4j_relations)
+            except Exception as e:
+                logger.error(f"Neo4j 写入失败: {e}", exc_info=True)
+                external_error = f"Neo4j 写入失败: {e}"
+
+        # ---- Step 6: 外部存储失败处理 ----
+        if external_error is not None:
+            await self._mark_history_failed(hist_repo, processing_id, external_error)
+            return {"status": "failed", "error": external_error}
+
+        logger.info(f"数据入库完成: document_id={document_id}, chunks={len(chunks)}")
         return {
             "document_id": str(document_id),
             "processing_id": processing_id,
@@ -466,6 +622,35 @@ class ProcessingService:
             "page_range": list(getattr(chunk, "page_range", (0, 0))),
             "section_title": getattr(chunk, "section_title", ""),
         }
+
+    @staticmethod
+    def _parse_page_range(page_range: str | None) -> Tuple[int, int]:
+        """解析页码范围字符串，返回 (start, end)
+
+        '1-3' → (1, 3), '5' → (5, 5), None/'' → (0, 0)
+        """
+        if not page_range:
+            return (0, 0)
+        m = re.match(r"(\d+)\s*(?:-\s*(\d+))?", str(page_range).strip())
+        if not m:
+            return (0, 0)
+        start = int(m.group(1))
+        end = int(m.group(2)) if m.group(2) else start
+        return (start, end)
+
+    async def _mark_history_failed(
+        self,
+        hist_repo: ProcessingHistoryRepository,
+        processing_id: str,
+        error_message: str,
+    ) -> None:
+        """标记处理历史为失败"""
+        try:
+            proc = await hist_repo.get_by_processing_id(processing_id)
+            if proc:
+                proc.mark_failed(error_message)
+        except Exception as e:
+            logger.error(f"更新处理历史失败状态时出错: {e}")
 
 
 def get_processing_service() -> ProcessingService:

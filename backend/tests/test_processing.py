@@ -209,3 +209,362 @@ class TestGetProcessingView:
             assert tab["progress"] == 50
             # stages 列表按 STAGE_ORDER 顺序展开
             assert len(tab["stages"]) == 6  # check, parsed, cleaned, images_described, chunked, stored
+
+
+class TestParsePageRange:
+
+    def test_none_returns_zero_zero(self):
+        from knowlebase.admin.processing.service import ProcessingService
+        assert ProcessingService._parse_page_range(None) == (0, 0)
+
+    def test_empty_returns_zero_zero(self):
+        from knowlebase.admin.processing.service import ProcessingService
+        assert ProcessingService._parse_page_range("") == (0, 0)
+
+    def test_single_page(self):
+        from knowlebase.admin.processing.service import ProcessingService
+        assert ProcessingService._parse_page_range("5") == (5, 5)
+
+    def test_page_range(self):
+        from knowlebase.admin.processing.service import ProcessingService
+        assert ProcessingService._parse_page_range("1-3") == (1, 3)
+
+    def test_page_range_with_spaces(self):
+        from knowlebase.admin.processing.service import ProcessingService
+        assert ProcessingService._parse_page_range(" 10 - 20 ") == (10, 20)
+
+
+class TestStoreResults:
+    """数据入库 (_store_results) 测试 — 使用 mock 验证 6 步流程"""
+
+    @pytest.fixture
+    def service(self):
+        from knowlebase.admin.processing.service import ProcessingService
+        return ProcessingService()
+
+    def _make_chunk(self, index=0):
+        """创建模拟 ChunkResult"""
+        from knowlebase.chunker.models import ChunkResult, Relation
+        return ChunkResult(
+            original_text=f"original_{index}",
+            processed_text=f"processed_{index}",
+            hypothetical_questions=[f"q{index}_a", f"q{index}_b"],
+            relations=[Relation(source="E1", relationship="位于", target="E2")],
+            page_range="1-2",
+            section_title=f"Section {index}",
+        )
+
+    @pytest.mark.asyncio
+    async def test_store_results_success(self, service):
+        """正常流程：6 步全部成功"""
+        mock_db = AsyncMock()
+        mock_db.commit = AsyncMock()
+
+        doc = MagicMock()
+        doc.id = 1
+        doc.original_filename = "test.pdf"
+        proc = MagicMock()
+        proc.mark_succeeded = MagicMock()
+
+        mock_doc_repo = MagicMock()
+        mock_doc_repo.get_by_id = AsyncMock(return_value=doc)
+        mock_hist_repo = MagicMock()
+        mock_hist_repo.get_by_processing_id = AsyncMock(return_value=proc)
+        mock_stage_repo = MagicMock()
+
+        chunks = [self._make_chunk(i) for i in range(2)]
+
+        with (
+            patch("knowlebase.admin.processing.service.get_embedding_service") as mock_emb,
+            patch("knowlebase.admin.processing.service.get_es_service") as mock_es,
+            patch("knowlebase.admin.processing.service.get_milvus_service") as mock_milvus,
+            patch("knowlebase.admin.processing.service.get_neo4j_service") as mock_neo4j,
+            patch("knowlebase.admin.processing.service.DocumentChunkRepository") as mock_chunk_repo_cls,
+        ):
+            mock_emb_svc = MagicMock()
+            mock_emb_svc.count_tokens = MagicMock(return_value=100)
+            mock_emb_svc.encode = MagicMock(return_value=[[0.1] * 512, [0.2] * 512])
+            mock_emb.return_value = mock_emb_svc
+
+            mock_es_svc = MagicMock()
+            mock_es_svc.delete_by_document_id = AsyncMock()
+            mock_es_svc.index_chunks = AsyncMock()
+            mock_es.return_value = mock_es_svc
+
+            mock_milvus_svc = MagicMock()
+            mock_milvus_svc.delete_by_document_id = MagicMock()
+            mock_milvus_svc.insert_vectors = MagicMock()
+            mock_milvus.return_value = mock_milvus_svc
+
+            mock_neo4j_svc = MagicMock()
+            mock_neo4j_svc.delete_by_document_id = AsyncMock()
+            mock_neo4j_svc.write_graph = AsyncMock()
+            mock_neo4j.return_value = mock_neo4j_svc
+
+            mock_chunk_repo = MagicMock()
+            mock_chunk_repo.delete_by_document_id = AsyncMock()
+            mock_chunk_repo.bulk_insert = AsyncMock()
+            mock_chunk_repo_cls.return_value = mock_chunk_repo
+
+            result = await service._store_results(
+                db=mock_db,
+                doc_repo=mock_doc_repo,
+                hist_repo=mock_hist_repo,
+                stage_repo=mock_stage_repo,
+                document_id=1,
+                processing_id="proc_1",
+                result=MagicMock(),
+                chunks=chunks,
+            )
+
+            assert result["status"] == "success"
+            assert result["chunks_count"] == 2
+            assert doc.chunk_count == 2
+            assert doc.total_token == 400  # 2 chunks × 200 tokens each (100+100)
+            assert doc.embedding_model is not None
+            proc.mark_succeeded.assert_called_once()
+            mock_es_svc.index_chunks.assert_awaited_once()
+            mock_milvus_svc.insert_vectors.assert_called_once()
+            mock_neo4j_svc.write_graph.assert_awaited_once()
+            assert mock_db.commit.await_count >= 1
+
+    @pytest.mark.asyncio
+    async def test_store_results_pg_failure_rollback(self, service):
+        """PostgreSQL 事务写入失败时回滚并标记失败"""
+        mock_db = AsyncMock()
+        mock_db.commit = AsyncMock(side_effect=RuntimeError("PG 写入失败"))
+        mock_db.rollback = AsyncMock()
+
+        doc = MagicMock()
+        proc = MagicMock()
+        proc.mark_failed = MagicMock()
+
+        mock_doc_repo = MagicMock()
+        mock_doc_repo.get_by_id = AsyncMock(return_value=doc)
+        mock_hist_repo = MagicMock()
+        mock_hist_repo.get_by_processing_id = AsyncMock(return_value=proc)
+        mock_stage_repo = MagicMock()
+
+        chunks = [self._make_chunk(0)]
+
+        with (
+            patch("knowlebase.admin.processing.service.get_embedding_service") as mock_emb,
+            patch("knowlebase.admin.processing.service.get_es_service") as mock_es,
+            patch("knowlebase.admin.processing.service.get_milvus_service") as mock_milvus,
+            patch("knowlebase.admin.processing.service.get_neo4j_service") as mock_neo4j,
+            patch("knowlebase.admin.processing.service.DocumentChunkRepository") as mock_chunk_repo_cls,
+        ):
+            mock_emb_svc = MagicMock()
+            mock_emb_svc.count_tokens = MagicMock(return_value=50)
+            mock_emb.return_value = mock_emb_svc
+
+            mock_es_svc = MagicMock()
+            mock_es_svc.delete_by_document_id = AsyncMock()
+            mock_es.return_value = mock_es_svc
+
+            mock_milvus_svc = MagicMock()
+            mock_milvus_svc.delete_by_document_id = MagicMock()
+            mock_milvus.return_value = mock_milvus_svc
+
+            mock_neo4j_svc = MagicMock()
+            mock_neo4j_svc.delete_by_document_id = AsyncMock()
+            mock_neo4j.return_value = mock_neo4j_svc
+
+            mock_chunk_repo = MagicMock()
+            mock_chunk_repo.delete_by_document_id = AsyncMock()
+            mock_chunk_repo.bulk_insert = AsyncMock()
+            mock_chunk_repo_cls.return_value = mock_chunk_repo
+
+            result = await service._store_results(
+                db=mock_db, doc_repo=mock_doc_repo, hist_repo=mock_hist_repo,
+                stage_repo=mock_stage_repo,
+                document_id=1, processing_id="proc_1",
+                result=MagicMock(), chunks=chunks,
+            )
+
+            assert result["status"] == "failed"
+            assert "PG 写入失败" in result["error"]
+            mock_db.rollback.assert_awaited_once()
+            proc.mark_failed.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_store_results_es_failure(self, service):
+        """ES 写入失败时标记失败，不阻止返回"""
+        mock_db = AsyncMock()
+        mock_db.commit = AsyncMock()
+
+        doc = MagicMock()
+        proc = MagicMock()
+        proc.mark_succeeded = MagicMock()
+        proc.mark_failed = MagicMock()
+
+        mock_doc_repo = MagicMock()
+        mock_doc_repo.get_by_id = AsyncMock(return_value=doc)
+        mock_hist_repo = MagicMock()
+        mock_hist_repo.get_by_processing_id = AsyncMock(return_value=proc)
+        mock_stage_repo = MagicMock()
+
+        chunks = [self._make_chunk(0)]
+
+        with (
+            patch("knowlebase.admin.processing.service.get_embedding_service") as mock_emb,
+            patch("knowlebase.admin.processing.service.get_es_service") as mock_es,
+            patch("knowlebase.admin.processing.service.get_milvus_service") as mock_milvus,
+            patch("knowlebase.admin.processing.service.get_neo4j_service") as mock_neo4j,
+            patch("knowlebase.admin.processing.service.DocumentChunkRepository") as mock_chunk_repo_cls,
+        ):
+            mock_emb_svc = MagicMock()
+            mock_emb_svc.count_tokens = MagicMock(return_value=50)
+            mock_emb.return_value = mock_emb_svc
+
+            mock_es_svc = MagicMock()
+            mock_es_svc.delete_by_document_id = AsyncMock()
+            mock_es_svc.index_chunks = AsyncMock(side_effect=RuntimeError("ES 不可用"))
+            mock_es.return_value = mock_es_svc
+
+            mock_milvus_svc = MagicMock()
+            mock_milvus_svc.delete_by_document_id = MagicMock()
+            mock_milvus.return_value = mock_milvus_svc
+
+            mock_neo4j_svc = MagicMock()
+            mock_neo4j_svc.delete_by_document_id = AsyncMock()
+            mock_neo4j.return_value = mock_neo4j_svc
+
+            mock_chunk_repo = MagicMock()
+            mock_chunk_repo.delete_by_document_id = AsyncMock()
+            mock_chunk_repo.bulk_insert = AsyncMock()
+            mock_chunk_repo_cls.return_value = mock_chunk_repo
+
+            result = await service._store_results(
+                db=mock_db, doc_repo=mock_doc_repo, hist_repo=mock_hist_repo,
+                stage_repo=mock_stage_repo,
+                document_id=1, processing_id="proc_1",
+                result=MagicMock(), chunks=chunks,
+            )
+
+            assert result["status"] == "failed"
+            assert "ES" in result["error"]
+            proc.mark_failed.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_store_results_milvus_failure(self, service):
+        """Milvus 写入失败时标记失败"""
+        mock_db = AsyncMock()
+        mock_db.commit = AsyncMock()
+
+        doc = MagicMock()
+        proc = MagicMock()
+        proc.mark_succeeded = MagicMock()
+        proc.mark_failed = MagicMock()
+
+        mock_doc_repo = MagicMock()
+        mock_doc_repo.get_by_id = AsyncMock(return_value=doc)
+        mock_hist_repo = MagicMock()
+        mock_hist_repo.get_by_processing_id = AsyncMock(return_value=proc)
+        mock_stage_repo = MagicMock()
+
+        chunks = [self._make_chunk(0)]
+
+        with (
+            patch("knowlebase.admin.processing.service.get_embedding_service") as mock_emb,
+            patch("knowlebase.admin.processing.service.get_es_service") as mock_es,
+            patch("knowlebase.admin.processing.service.get_milvus_service") as mock_milvus,
+            patch("knowlebase.admin.processing.service.get_neo4j_service") as mock_neo4j,
+            patch("knowlebase.admin.processing.service.DocumentChunkRepository") as mock_chunk_repo_cls,
+        ):
+            mock_emb_svc = MagicMock()
+            mock_emb_svc.count_tokens = MagicMock(return_value=50)
+            mock_emb_svc.encode = MagicMock(return_value=[[0.1] * 512])
+            mock_emb.return_value = mock_emb_svc
+
+            mock_es_svc = MagicMock()
+            mock_es_svc.delete_by_document_id = AsyncMock()
+            mock_es_svc.index_chunks = AsyncMock()  # ES succeeds
+            mock_es.return_value = mock_es_svc
+
+            mock_milvus_svc = MagicMock()
+            mock_milvus_svc.delete_by_document_id = MagicMock()
+            mock_milvus_svc.insert_vectors = MagicMock(side_effect=RuntimeError("Milvus 不可用"))
+            mock_milvus.return_value = mock_milvus_svc
+
+            mock_neo4j_svc = MagicMock()
+            mock_neo4j_svc.delete_by_document_id = AsyncMock()
+            mock_neo4j.return_value = mock_neo4j_svc
+
+            mock_chunk_repo = MagicMock()
+            mock_chunk_repo.delete_by_document_id = AsyncMock()
+            mock_chunk_repo.bulk_insert = AsyncMock()
+            mock_chunk_repo_cls.return_value = mock_chunk_repo
+
+            result = await service._store_results(
+                db=mock_db, doc_repo=mock_doc_repo, hist_repo=mock_hist_repo,
+                stage_repo=mock_stage_repo,
+                document_id=1, processing_id="proc_1",
+                result=MagicMock(), chunks=chunks,
+            )
+
+            assert result["status"] == "failed"
+            assert "Milvus" in result["error"]
+            proc.mark_failed.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_store_results_neo4j_failure(self, service):
+        """Neo4j 写入失败时标记失败"""
+        mock_db = AsyncMock()
+        mock_db.commit = AsyncMock()
+
+        doc = MagicMock()
+        proc = MagicMock()
+        proc.mark_succeeded = MagicMock()
+        proc.mark_failed = MagicMock()
+
+        mock_doc_repo = MagicMock()
+        mock_doc_repo.get_by_id = AsyncMock(return_value=doc)
+        mock_hist_repo = MagicMock()
+        mock_hist_repo.get_by_processing_id = AsyncMock(return_value=proc)
+        mock_stage_repo = MagicMock()
+
+        chunks = [self._make_chunk(0)]
+
+        with (
+            patch("knowlebase.admin.processing.service.get_embedding_service") as mock_emb,
+            patch("knowlebase.admin.processing.service.get_es_service") as mock_es,
+            patch("knowlebase.admin.processing.service.get_milvus_service") as mock_milvus,
+            patch("knowlebase.admin.processing.service.get_neo4j_service") as mock_neo4j,
+            patch("knowlebase.admin.processing.service.DocumentChunkRepository") as mock_chunk_repo_cls,
+        ):
+            mock_emb_svc = MagicMock()
+            mock_emb_svc.count_tokens = MagicMock(return_value=50)
+            mock_emb_svc.encode = MagicMock(return_value=[[0.1] * 512])
+            mock_emb.return_value = mock_emb_svc
+
+            mock_es_svc = MagicMock()
+            mock_es_svc.delete_by_document_id = AsyncMock()
+            mock_es_svc.index_chunks = AsyncMock()
+            mock_es.return_value = mock_es_svc
+
+            mock_milvus_svc = MagicMock()
+            mock_milvus_svc.delete_by_document_id = MagicMock()
+            mock_milvus_svc.insert_vectors = MagicMock()
+            mock_milvus.return_value = mock_milvus_svc
+
+            mock_neo4j_svc = MagicMock()
+            mock_neo4j_svc.delete_by_document_id = AsyncMock()
+            mock_neo4j_svc.write_graph = AsyncMock(side_effect=RuntimeError("Neo4j 不可用"))
+            mock_neo4j.return_value = mock_neo4j_svc
+
+            mock_chunk_repo = MagicMock()
+            mock_chunk_repo.delete_by_document_id = AsyncMock()
+            mock_chunk_repo.bulk_insert = AsyncMock()
+            mock_chunk_repo_cls.return_value = mock_chunk_repo
+
+            result = await service._store_results(
+                db=mock_db, doc_repo=mock_doc_repo, hist_repo=mock_hist_repo,
+                stage_repo=mock_stage_repo,
+                document_id=1, processing_id="proc_1",
+                result=MagicMock(), chunks=chunks,
+            )
+
+            assert result["status"] == "failed"
+            assert "Neo4j" in result["error"]
+            proc.mark_failed.assert_called_once()

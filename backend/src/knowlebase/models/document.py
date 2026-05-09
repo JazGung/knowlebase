@@ -123,7 +123,7 @@ class Document(Base):
         default=0,
         comment="分块数量"
     )
-    total_tokens = Column(
+    total_token = Column(
         Integer,
         nullable=False,
         default=0,
@@ -252,7 +252,7 @@ class Document(Base):
             "processing_id": self.processing_id,
             "attempt_no": self.attempt_no,
             "chunk_count": self.chunk_count,
-            "total_tokens": self.total_tokens,
+            "total_token": self.total_token,
             "embedding_model": self.embedding_model,
             "category": self.category,
             "tag": self.tag or [],
