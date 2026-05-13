@@ -133,3 +133,8 @@ docker-compose -f docker-compose-app.yml up -d
 | `default_llm_api_key` | str | — | API 密钥 |
 | `default_llm_api_base` | str | — | API 地址（可选，自定义/私有部署时填写） |
 | `default_llm_temperature` | float | — | 温度参数 |
+
+## 9. 开发环境要求
+
+- **Python 版本**：后端启动、测试、脚本执行必须使用常规 Python（非 free-threaded 版本），避免 `asyncpg`、`pydantic-core` 等 C 扩展不兼容。
+- **本地请求代理**：curl 请求本地服务时需加 `--noproxy 'localhost'` 避免被系统代理转发。
