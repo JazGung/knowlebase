@@ -29,8 +29,7 @@ def make_mock_document(overrides: dict = None) -> MagicMock:
     doc.total_token = 0
     doc.embedding_model = None
     doc.language = "zh"
-    doc.source_type = "upload"
-    doc.rebuild_id = None
+    doc.build_id = None
     if overrides:
         for key, value in overrides.items():
             setattr(doc, key, value)
@@ -40,7 +39,7 @@ def make_mock_document(overrides: dict = None) -> MagicMock:
 def make_mock_processing(overrides: dict = None) -> MagicMock:
     proc = MagicMock()
     proc.id = 1
-    proc.document_id = 123
+    proc.relation_id = 123
     proc.processing_id = "proc_test12345"
     proc.attempt_no = 1
     proc.status = "succeeded"
@@ -136,7 +135,16 @@ class TestGetDocumentDetail:
         ):
             mock_doc, mock_hist = _patch_repos(mock_doc_cls, mock_hist_cls)
             mock_doc.get_by_id = AsyncMock(return_value=doc)
-            mock_hist.get_by_document_id = AsyncMock(return_value=[proc])
+
+            # Mock db.execute for DocumentVersionRelation query
+            mock_relation = MagicMock()
+            mock_relation.id = 1
+            mock_relation.document_id = 123
+            exec_result = AsyncMock()
+            exec_result.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[mock_relation])))
+            mock_db.execute = AsyncMock(return_value=exec_result)
+
+            mock_hist.get_by_relation_id = AsyncMock(return_value=[proc])
 
             result = await service.get_document_detail(mock_db, "123")
             assert result is not None
@@ -163,7 +171,11 @@ class TestGetDocumentDetail:
         ):
             mock_doc, mock_hist = _patch_repos(mock_doc_cls, mock_hist_cls)
             mock_doc.get_by_id = AsyncMock(return_value=doc)
-            mock_hist.get_by_document_id = AsyncMock(return_value=[])
+
+            # Mock db.execute returning no relations
+            exec_result = AsyncMock()
+            exec_result.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))
+            mock_db.execute = AsyncMock(return_value=exec_result)
 
             result = await service.get_document_detail(mock_db, "123")
             assert result is not None
@@ -176,18 +188,27 @@ class TestEnableDocument:
     @pytest.mark.asyncio
     async def test_enable_disabled_document(self, service):
         mock_db = AsyncMock()
+        mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
         doc = make_mock_document(overrides={"status": "disabled"})
 
-        with patch("knowlebase.admin.document.service.DocumentRepository") as mock_repo_cls:
+        with (
+            patch("knowlebase.admin.document.service.DocumentRepository") as mock_repo_cls,
+            patch("knowlebase.admin.document.service.DocumentChunkRepository") as mock_chunk_cls,
+        ):
             mock_repo_cls.return_value.get_by_id = AsyncMock(return_value=doc)
+            mock_chunk = MagicMock()
+            mock_chunk.update_enabled_by_document_id = AsyncMock()
+            mock_chunk_cls.return_value = mock_chunk
 
             await service.enable_document(mock_db, "123")
             assert doc.status == "enabled"
+            mock_chunk.update_enabled_by_document_id.assert_awaited_once_with(123, True)
             mock_db.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_enable_nonexistent_document(self, service):
         mock_db = AsyncMock()
+        mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
         with patch("knowlebase.admin.document.service.DocumentRepository") as mock_repo_cls:
             mock_repo_cls.return_value.get_by_id = AsyncMock(return_value=None)
 
@@ -207,24 +228,47 @@ class TestEnableDocument:
                 await service.enable_document(mock_db, "123")
             assert exc_info.value.status_code == 400
 
+    @pytest.mark.asyncio
+    async def test_enable_blocked_by_building(self, service):
+        mock_db = AsyncMock()
+        building_version = MagicMock()
+        building_version.status = "building"
+        mock_db.execute = AsyncMock(return_value=MagicMock(
+            scalar_one_or_none=MagicMock(return_value=building_version)
+        ))
+
+        with pytest.raises(HTTPException) as exc_info:
+            await service.enable_document(mock_db, "123")
+        assert exc_info.value.status_code == 400
+        assert "构建中" in str(exc_info.value.detail)
+
 
 class TestDisableDocument:
 
     @pytest.mark.asyncio
     async def test_disable_enabled_document(self, service):
         mock_db = AsyncMock()
+        mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
         doc = make_mock_document(overrides={"status": "enabled"})
 
-        with patch("knowlebase.admin.document.service.DocumentRepository") as mock_repo_cls:
+        with (
+            patch("knowlebase.admin.document.service.DocumentRepository") as mock_repo_cls,
+            patch("knowlebase.admin.document.service.DocumentChunkRepository") as mock_chunk_cls,
+        ):
             mock_repo_cls.return_value.get_by_id = AsyncMock(return_value=doc)
+            mock_chunk = MagicMock()
+            mock_chunk.update_enabled_by_document_id = AsyncMock()
+            mock_chunk_cls.return_value = mock_chunk
 
             await service.disable_document(mock_db, "123")
             assert doc.status == "disabled"
+            mock_chunk.update_enabled_by_document_id.assert_awaited_once_with(123, False)
             mock_db.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_disable_nonexistent_document(self, service):
         mock_db = AsyncMock()
+        mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
         with patch("knowlebase.admin.document.service.DocumentRepository") as mock_repo_cls:
             mock_repo_cls.return_value.get_by_id = AsyncMock(return_value=None)
 
@@ -244,6 +288,20 @@ class TestDisableDocument:
                 await service.disable_document(mock_db, "123")
             assert exc_info.value.status_code == 400
 
+    @pytest.mark.asyncio
+    async def test_disable_blocked_by_building(self, service):
+        mock_db = AsyncMock()
+        building_version = MagicMock()
+        building_version.status = "building"
+        mock_db.execute = AsyncMock(return_value=MagicMock(
+            scalar_one_or_none=MagicMock(return_value=building_version)
+        ))
+
+        with pytest.raises(HTTPException) as exc_info:
+            await service.disable_document(mock_db, "123")
+        assert exc_info.value.status_code == 400
+        assert "构建中" in str(exc_info.value.detail)
+
 
 class TestProcessDocuments:
 
@@ -257,15 +315,29 @@ class TestProcessDocuments:
         with (
             patch("knowlebase.admin.document.service.DocumentRepository") as mock_doc_cls,
             patch("knowlebase.admin.document.service.ProcessingHistoryRepository") as mock_hist_cls,
+            patch("knowlebase.admin.processing.service.get_processing_service") as mock_get_ps,
+            patch("knowlebase.admin.document.service.asyncio.create_task") as mock_task,
         ):
             mock_doc, mock_hist = _patch_repos(mock_doc_cls, mock_hist_cls)
             mock_doc.get_by_id = AsyncMock(return_value=doc)
+            # building lock check → no building version
+            mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
             mock_hist.has_active_processing = AsyncMock(return_value=False)
             mock_hist.get_max_attempt_no = AsyncMock(return_value=0)
+            mock_hist.add = AsyncMock(return_value=None)
+
+            mock_ps = MagicMock()
+            mock_rel = MagicMock()
+            mock_rel.id = 1
+            mock_rel.document_id = 123
+            mock_ps._get_or_create_relation = AsyncMock(return_value=mock_rel)
+            mock_get_ps.return_value = mock_ps
 
             results = await service.process_documents(mock_db, [123])
             assert len(results) == 1
             assert results[0].status == "success"
+            mock_hist.add.assert_awaited_once()
+            mock_task.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_process_with_existing_history(self, service):
@@ -277,11 +349,21 @@ class TestProcessDocuments:
         with (
             patch("knowlebase.admin.document.service.DocumentRepository") as mock_doc_cls,
             patch("knowlebase.admin.document.service.ProcessingHistoryRepository") as mock_hist_cls,
+            patch("knowlebase.admin.processing.service.get_processing_service") as mock_get_ps,
+            patch("knowlebase.admin.document.service.asyncio.create_task") as mock_task,
         ):
             mock_doc, mock_hist = _patch_repos(mock_doc_cls, mock_hist_cls)
             mock_doc.get_by_id = AsyncMock(return_value=doc)
+            mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
             mock_hist.has_active_processing = AsyncMock(return_value=False)
             mock_hist.get_max_attempt_no = AsyncMock(return_value=3)
+            mock_hist.add = AsyncMock(return_value=None)
+
+            mock_ps = MagicMock()
+            mock_rel = MagicMock()
+            mock_rel.id = 1
+            mock_ps._get_or_create_relation = AsyncMock(return_value=mock_rel)
+            mock_get_ps.return_value = mock_ps
 
             results = await service.process_documents(mock_db, [5])
             assert results[0].status == "success"
@@ -289,6 +371,7 @@ class TestProcessDocuments:
     @pytest.mark.asyncio
     async def test_process_nonexistent_document(self, service):
         mock_db = AsyncMock()
+        mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
         with patch("knowlebase.admin.document.service.DocumentRepository") as mock_repo_cls:
             mock_repo_cls.return_value.get_by_id = AsyncMock(return_value=None)
 
@@ -297,19 +380,41 @@ class TestProcessDocuments:
             assert "不存在" in results[0].reason
 
     @pytest.mark.asyncio
-    async def test_process_document_with_active_processing(self, service):
+    async def test_process_blocked_by_building(self, service):
         mock_db = AsyncMock()
-        mock_db.commit = AsyncMock()
+        building_version = MagicMock()
+        building_version.status = "building"
+        mock_db.execute = AsyncMock(return_value=MagicMock(
+            scalar_one_or_none=MagicMock(return_value=building_version)
+        ))
+
+        results = await service.process_documents(mock_db, [123])
+        assert len(results) == 1
+        assert results[0].status == "failed"
+        assert "构建中" in results[0].reason
+
+    @pytest.mark.asyncio
+    async def test_process_active_processing_blocked(self, service):
+        mock_db = AsyncMock()
+        doc = make_mock_document()
         mock_db.flush = AsyncMock()
+        mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
 
         with (
             patch("knowlebase.admin.document.service.DocumentRepository") as mock_doc_cls,
             patch("knowlebase.admin.document.service.ProcessingHistoryRepository") as mock_hist_cls,
+            patch("knowlebase.admin.processing.service.get_processing_service") as mock_get_ps,
         ):
             mock_doc, mock_hist = _patch_repos(mock_doc_cls, mock_hist_cls)
-            mock_doc.get_by_id = AsyncMock(return_value=make_mock_document())
+            mock_doc.get_by_id = AsyncMock(return_value=doc)
             mock_hist.has_active_processing = AsyncMock(return_value=True)
 
-            results = await service.process_documents(mock_db, [5])
+            mock_ps = MagicMock()
+            mock_rel = MagicMock()
+            mock_rel.id = 1
+            mock_ps._get_or_create_relation = AsyncMock(return_value=mock_rel)
+            mock_get_ps.return_value = mock_ps
+
+            results = await service.process_documents(mock_db, [123])
             assert results[0].status == "failed"
             assert "处理中" in results[0].reason

@@ -11,6 +11,7 @@ from sqlalchemy import (
     String,
     Integer,
     BigInteger,
+    Boolean,
     Text,
     TIMESTAMP,
     ForeignKey,
@@ -111,6 +112,13 @@ class DocumentChunk(Base):
         comment="所属章节标题"
     )
 
+    enabled = Column(
+        Boolean,
+        nullable=False,
+        default=True,
+        comment="是否参与检索（启用=true，停用=false）"
+    )
+
     # 关系
     document = relationship("Document", back_populates="chunks", lazy="selectin")
 
@@ -142,6 +150,7 @@ class DocumentChunk(Base):
             "page_range_start": self.page_range_start,
             "page_range_end": self.page_range_end,
             "section_title": self.section_title,
+            "enabled": self.enabled,
         }
 
     def __repr__(self):

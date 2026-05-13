@@ -116,7 +116,7 @@ class TestProcessingHistoryRepository:
 
     @pytest.mark.asyncio
     async def test_get_by_processing_id_found(self, db):
-        proc = DocumentProcessingHistory(document_id=1, processing_id="proc_abc", attempt_no=1)
+        proc = DocumentProcessingHistory(relation_id=1, processing_id="proc_abc", attempt_no=1)
         db.execute = AsyncMock(return_value=mock_execute_return(proc))
 
         result = await self.repo(db).get_by_processing_id("proc_abc")
@@ -130,23 +130,23 @@ class TestProcessingHistoryRepository:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_get_latest_by_document_id(self, db):
-        proc = DocumentProcessingHistory(document_id=1, processing_id="proc_latest", attempt_no=3)
+    async def test_get_latest_by_relation_id(self, db):
+        proc = DocumentProcessingHistory(relation_id=1, processing_id="proc_latest", attempt_no=3)
         db.execute = AsyncMock(return_value=mock_execute_return(proc))
 
-        result = await self.repo(db).get_latest_by_document_id(1)
+        result = await self.repo(db).get_latest_by_relation_id(1)
         assert result is proc
 
     @pytest.mark.asyncio
     async def test_get_latest_returns_none(self, db):
         db.execute = AsyncMock(return_value=mock_execute_return(None))
 
-        result = await self.repo(db).get_latest_by_document_id(999)
+        result = await self.repo(db).get_latest_by_relation_id(999)
         assert result is None
 
     @pytest.mark.asyncio
     async def test_has_active_processing_true(self, db):
-        proc = DocumentProcessingHistory(document_id=1, processing_id="proc_active", attempt_no=1)
+        proc = DocumentProcessingHistory(relation_id=1, processing_id="proc_active", attempt_no=1)
         db.execute = AsyncMock(return_value=mock_execute_return(proc))
 
         result = await self.repo(db).has_active_processing(1)
@@ -175,7 +175,7 @@ class TestProcessingHistoryRepository:
 
     @pytest.mark.asyncio
     async def test_add(self, db):
-        proc = DocumentProcessingHistory(document_id=1, processing_id="proc_add", attempt_no=1)
+        proc = DocumentProcessingHistory(relation_id=1, processing_id="proc_add", attempt_no=1)
         db.add = MagicMock()
         db.flush = AsyncMock()
 

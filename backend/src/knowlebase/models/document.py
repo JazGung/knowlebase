@@ -101,9 +101,8 @@ class Document(Base):
     # 处理信息
     processing_id = Column(
         String(36),
-        ForeignKey("document_processing_history.processing_id"),
         nullable=True,
-        comment="当前处理任务ID"
+        comment="当前处理任务ID（跨领域引用，无外键约束）"
     )
     attempt_no = Column(
         Integer,
@@ -136,18 +135,11 @@ class Document(Base):
         default="zh",
         comment="文档语言代码"
     )
-    source_type = Column(
-        String(50),
-        nullable=True,
-        default="upload",
-        comment="来源类型：upload, api, crawl, import"
-    )
-
-    # 重建关联
-    rebuild_id = Column(
+    # 关联构建记录
+    build_id = Column(
         String(36),
         nullable=True,
-        comment="关联的重建记录ID"
+        comment="关联的构建记录ID"
     )
 
     # 时间戳
@@ -172,23 +164,12 @@ class Document(Base):
 
     # 关系
     chunks = relationship("DocumentChunk", back_populates="document", cascade="all, delete-orphan", lazy="selectin")
-    processing_history = relationship(
-        "DocumentProcessingHistory",
-        back_populates="document",
-        foreign_keys="DocumentProcessingHistory.document_id",
-        cascade="all, delete-orphan",
-        lazy="selectin"
-    )
 
     # 约束
     __table_args__ = (
         CheckConstraint(
             "status IN ('enabled', 'disabled')",
             name="check_document_status"
-        ),
-        CheckConstraint(
-            "source_type IN ('upload', 'api', 'crawl', 'import')",
-            name="check_document_source_type"
         ),
         CheckConstraint(
             "attempt_no >= 1",
@@ -234,8 +215,7 @@ class Document(Base):
             "total_token": self.total_token,
             "embedding_model": self.embedding_model,
             "language": self.language,
-            "source_type": self.source_type,
-            "rebuild_id": self.rebuild_id,
+            "build_id": self.build_id,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "processed_at": self.processed_at.isoformat() if self.processed_at else None,
@@ -245,8 +225,6 @@ class Document(Base):
             result["user_id"] = str(self.user_id) if self.user_id else None
             if self.chunks:
                 result["chunks"] = [chunk.to_dict() for chunk in self.chunks]
-            if self.processing_history:
-                result["processing_history"] = [history.to_dict() for history in self.processing_history]
 
         return result
 
@@ -266,12 +244,6 @@ class Document(Base):
         """停用文档"""
         self.status = "disabled"
         self.updated_at = datetime.now()
-
-    def add_processing_history(self, history: "DocumentProcessingHistory") -> None:
-        """添加处理历史记录，维护双向关联"""
-        history.document = self
-        if history not in (self.processing_history or []):
-            self.processing_history = (self.processing_history or []) + [history]
 
     def __repr__(self):
         return f"<Document(id={self.id}, filename='{self.original_filename}', status='{self.status}')>"
@@ -296,11 +268,11 @@ class DocumentProcessingHistory(Base):
     )
 
     # 外键关联
-    document_id = Column(
+    relation_id = Column(
         BigInteger,
-        ForeignKey("document.id", ondelete="CASCADE"),
+        ForeignKey("document_version_relation.id", ondelete="CASCADE"),
         nullable=False,
-        comment="文档ID"
+        comment="关联 document_version_relation.id"
     )
 
     # 处理信息
@@ -360,10 +332,10 @@ class DocumentProcessingHistory(Base):
     )
 
     # 关系
-    document = relationship(
-        "Document",
-        back_populates="processing_history",
-        foreign_keys=[document_id],
+    relation = relationship(
+        "DocumentVersionRelation",
+        back_populates="processing_histories",
+        foreign_keys=[relation_id],
         lazy="selectin"
     )
     stage_results = relationship(
@@ -384,9 +356,9 @@ class DocumentProcessingHistory(Base):
             "progress >= 0 AND progress <= 100",
             name="check_progress_range"
         ),
-        UniqueConstraint("document_id", "attempt_no", name="uk_history_document_attempt_no"),
+        UniqueConstraint("relation_id", "attempt_no", name="uk_history_relation_attempt_no"),
         UniqueConstraint("processing_id", name="uk_history_processing_id"),
-        Index("idx_processing_history_document_id", "document_id"),
+        Index("idx_processing_history_relation_id", "relation_id"),
         Index("idx_processing_history_processing_id", "processing_id"),
         {"comment": "文档处理历史记录表"}
     )
@@ -395,7 +367,7 @@ class DocumentProcessingHistory(Base):
         """将模型转换为字典"""
         return {
             "id": str(self.id),
-            "document_id": str(self.document_id),
+            "relation_id": str(self.relation_id),
             "processing_id": self.processing_id,
             "attempt_no": self.attempt_no,
             "status": self.status,
@@ -433,7 +405,7 @@ class DocumentProcessingHistory(Base):
         self.progress = progress
 
     def __repr__(self):
-        return f"<DocumentProcessingHistory(id={self.id}, document_id={self.document_id}, status='{self.status}', progress={self.progress}%)>"
+        return f"<DocumentProcessingHistory(id={self.id}, relation_id={self.relation_id}, status='{self.status}', progress={self.progress}%)>"
 
 
 # 注意：DocumentChunk模型在单独的chunk.py文件中定义

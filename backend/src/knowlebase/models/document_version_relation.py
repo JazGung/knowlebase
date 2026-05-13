@@ -2,6 +2,7 @@
 文档-版本关联数据库模型
 
 包含文档与知识库版本关联关系的SQLAlchemy模型
+跨模块引用：document_id 和 version_id 均为字段值，无外键约束
 """
 
 from typing import Dict, Any
@@ -9,10 +10,9 @@ from typing import Dict, Any
 from sqlalchemy import (
     Column,
     String,
-    Integer,
+    Boolean,
     BigInteger,
     TIMESTAMP,
-    ForeignKey,
     UniqueConstraint,
     Index,
 )
@@ -39,18 +39,16 @@ class DocumentVersionRelation(Base):
         comment="关联唯一标识"
     )
 
-    # 外键关联
+    # 跨模块引用：仅存ID值，无外键约束
     document_id = Column(
         BigInteger,
-        ForeignKey("document.id", ondelete="CASCADE"),
         nullable=False,
-        comment="文档ID"
+        comment="文档ID（引用 文档管理.Document）"
     )
     version_id = Column(
         BigInteger,
-        ForeignKey("knowledge_base_version.id", ondelete="CASCADE"),
         nullable=False,
-        comment="版本ID"
+        comment="版本ID（引用 知识库管理.KnowledgeBaseVersion）"
     )
 
     # 关联信息
@@ -64,6 +62,14 @@ class DocumentVersionRelation(Base):
         nullable=False,
         default="pending",
         comment="处理状态：pending|processing|succeeded|failed"
+    )
+
+    # 是否入库可检索
+    stored = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+        comment="是否已入库可检索（启用=true，停用=false）"
     )
 
     # 时间戳
@@ -82,12 +88,17 @@ class DocumentVersionRelation(Base):
     )
 
     # 关系
-    document = relationship("Document", lazy="selectin")
-    version = relationship("KnowledgeBaseVersion", back_populates="document_relations", lazy="selectin")
+    processing_histories = relationship(
+        "DocumentProcessingHistory",
+        back_populates="relation",
+        foreign_keys="DocumentProcessingHistory.relation_id",
+        cascade="all, delete-orphan",
+        lazy="selectin"
+    )
 
     # 约束和索引
     __table_args__ = (
-        UniqueConstraint("document_id", "version_id", name="uq_document_version"),
+        UniqueConstraint("document_id", "version_id", name="uk_document_version"),
         Index("idx_doc_ver_relation_document", "document_id"),
         Index("idx_doc_ver_relation_version", "version_id"),
         Index("idx_doc_ver_relation_status", "status"),
@@ -102,6 +113,7 @@ class DocumentVersionRelation(Base):
             "version_id": str(self.version_id),
             "relation_type": self.relation_type,
             "status": self.status,
+            "stored": self.stored,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

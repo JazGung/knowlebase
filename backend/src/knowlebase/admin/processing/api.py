@@ -98,20 +98,20 @@ async def stage_result(
     tags=["文档处理"]
 )
 async def view(
-    document_ids: str = Query(..., description="逗号分隔的文档ID列表"),
+    relation_ids: str = Query(..., description="逗号分隔的关联记录ID列表"),
     db: AsyncSession = Depends(get_db),
     processing_svc: ProcessingService = Depends(get_processing_service),
 ):
     """查询多个文档的处理过程，返回多 tab 视图数据"""
     try:
-        doc_id_list = [int(did.strip()) for did in document_ids.split(",") if did.strip()]
-        if not doc_id_list:
+        rel_id_list = [int(rid.strip()) for rid in relation_ids.split(",") if rid.strip()]
+        if not rel_id_list:
             return JSONResponse(
                 status_code=200,
-                content={"code": "400004", "description": "document_ids 不能为空", "content": None}
+                content={"code": "400004", "description": "relation_ids 不能为空", "content": None}
             )
 
-        result = await processing_svc.get_processing_view(db, doc_id_list)
+        result = await processing_svc.get_processing_view(db, rel_id_list)
 
         return BaseResponse(
             description="处理过程视图查询成功",
@@ -159,3 +159,54 @@ async def stream(
             "X-Accel-Buffering": "no",
         }
     )
+
+
+@router.get(
+    "/relation/list",
+    response_model=BaseResponse,
+    summary="文档-版本关联查询",
+    tags=["文档处理"]
+)
+async def query_relations(
+    page: int = Query(default=1, ge=1, description="页码"),
+    page_size: int = Query(default=20, ge=1, le=100, description="每页数量"),
+    document_id: int = Query(default=None, description="按文档ID过滤"),
+    version_id: int = Query(default=None, description="按版本ID过滤"),
+    db: AsyncSession = Depends(get_db),
+    processing_svc: ProcessingService = Depends(get_processing_service),
+):
+    """分页查询文档-版本关联记录（DEG 4.4）"""
+    try:
+        result = await processing_svc.query_relations(db, page, page_size, document_id, version_id)
+        return BaseResponse(description="查询成功", content=result)
+    except Exception as e:
+        logger.error(f"关联查询失败: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=200,
+            content={"code": "500000", "description": "关联查询失败", "content": None}
+        )
+
+
+@router.get(
+    "/history/list",
+    response_model=BaseResponse,
+    summary="处理记录查询",
+    tags=["文档处理"]
+)
+async def query_history(
+    relation_id: int = Query(..., ge=1, description="关联记录ID"),
+    page: int = Query(default=1, ge=1, description="页码"),
+    page_size: int = Query(default=20, ge=1, le=100, description="每页数量"),
+    db: AsyncSession = Depends(get_db),
+    processing_svc: ProcessingService = Depends(get_processing_service),
+):
+    """分页查询指定关联记录的处理历史（DEG 4.6）"""
+    try:
+        result = await processing_svc.query_history(db, relation_id, page, page_size)
+        return BaseResponse(description="查询成功", content=result)
+    except Exception as e:
+        logger.error(f"处理记录查询失败: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=200,
+            content={"code": "500000", "description": "处理记录查询失败", "content": None}
+        )

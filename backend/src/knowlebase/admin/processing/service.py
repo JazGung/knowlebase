@@ -14,12 +14,14 @@ from dataclasses import asdict
 from datetime import datetime
 from typing import Dict, List, Optional, Callable, Any, Tuple
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from knowlebase.core.config import settings
 from knowlebase.models.document import Document, DocumentProcessingHistory
 from knowlebase.models.processing_stage_result import ProcessingStageResult
 from knowlebase.models.chunk import DocumentChunk
+from knowlebase.models.document_version_relation import DocumentVersionRelation
 from knowlebase.repositories import (
     DocumentRepository,
     ProcessingHistoryRepository,
@@ -54,6 +56,7 @@ class ProcessingService:
         document_id: int,
         processing_id: str,
         attempt_no: int = 1,
+        relation_id: int | None = None,
     ) -> Dict:
         """执行完整处理流水线"""
         event_bus = get_event_bus()
@@ -62,14 +65,26 @@ class ProcessingService:
         hist_repo = ProcessingHistoryRepository(db)
         stage_repo = StageResultRepository(db)
 
+        # 查找或确认关联记录
+        if relation_id is None:
+            relation = await self._get_or_create_relation(db, document_id)
+            if not relation:
+                return {"status": "failed", "error": "无启用的知识库版本"}
+            relation_id = relation.id
+        else:
+            relation = await db.get(DocumentVersionRelation, relation_id)
+            if not relation:
+                return {"status": "failed", "error": "文档-版本关联不存在"}
+
         # ---- 4.10.5 文档检查 ----
         doc = await self._run_stage(
             db=db, doc_repo=doc_repo, hist_repo=hist_repo, stage_repo=stage_repo,
             stage_name="check", progress=10,
             document_id=document_id, processing_id=processing_id,
-            attempt_no=attempt_no, event_bus=event_bus, doc_event=doc_event,
+            attempt_no=attempt_no, event_bus=event_bus, doc_event=doc_event, relation_id=relation_id,
             execute=lambda: self._check_document(db, doc_repo, hist_repo,
-                                                  document_id, processing_id,
+                                                  document_id, relation_id,
+                                                  processing_id,
                                                   attempt_no, stage_repo),
         )
         if doc is None:
@@ -81,7 +96,7 @@ class ProcessingService:
             db=db, doc_repo=doc_repo, hist_repo=hist_repo, stage_repo=stage_repo,
             stage_name="parsed", progress=30,
             document_id=document_id, processing_id=processing_id,
-            attempt_no=attempt_no, event_bus=event_bus, doc_event=doc_event,
+            attempt_no=attempt_no, event_bus=event_bus, doc_event=doc_event, relation_id=relation_id,
             execute=lambda: self._parse_document(db, hist_repo, stage_repo,
                                                   doc, file_hash, processing_id),
             write_result=True, result_stage_name="parsed",
@@ -94,7 +109,7 @@ class ProcessingService:
             db=db, doc_repo=doc_repo, hist_repo=hist_repo, stage_repo=stage_repo,
             stage_name="cleaned", progress=50,
             document_id=document_id, processing_id=processing_id,
-            attempt_no=attempt_no, event_bus=event_bus, doc_event=doc_event,
+            attempt_no=attempt_no, event_bus=event_bus, doc_event=doc_event, relation_id=relation_id,
             execute=lambda: self._clean_document(result, file_hash, processing_id),
             write_result=True, result_stage_name="cleaned",
         )
@@ -106,7 +121,7 @@ class ProcessingService:
             db=db, doc_repo=doc_repo, hist_repo=hist_repo, stage_repo=stage_repo,
             stage_name="images_described", progress=60,
             document_id=document_id, processing_id=processing_id,
-            attempt_no=attempt_no, event_bus=event_bus, doc_event=doc_event,
+            attempt_no=attempt_no, event_bus=event_bus, doc_event=doc_event, relation_id=relation_id,
             execute=lambda: replace_images_with_markers(result),
         )
         if result is None:
@@ -117,7 +132,7 @@ class ProcessingService:
             db=db, doc_repo=doc_repo, hist_repo=hist_repo, stage_repo=stage_repo,
             stage_name="chunked", progress=80,
             document_id=document_id, processing_id=processing_id,
-            attempt_no=attempt_no, event_bus=event_bus, doc_event=doc_event,
+            attempt_no=attempt_no, event_bus=event_bus, doc_event=doc_event, relation_id=relation_id,
             execute=lambda: self._chunk_document(result, doc, processing_id, file_hash),
             write_result=True, result_stage_name="chunked",
         )
@@ -129,9 +144,9 @@ class ProcessingService:
             db=db, doc_repo=doc_repo, hist_repo=hist_repo, stage_repo=stage_repo,
             stage_name="stored", progress=90,
             document_id=document_id, processing_id=processing_id,
-            attempt_no=attempt_no, event_bus=event_bus, doc_event=doc_event,
+            attempt_no=attempt_no, event_bus=event_bus, doc_event=doc_event, relation_id=relation_id,
             execute=lambda: self._store_results(db, doc_repo, hist_repo, stage_repo,
-                                                 document_id, processing_id, result, chunks),
+                                                 document_id, processing_id, result, chunks, relation_id),
         )
         if final is None:
             return {"status": "failed", "error": "数据入库失败"}
@@ -156,6 +171,7 @@ class ProcessingService:
         execute: Callable,
         write_result: bool = False,
         result_stage_name: str | None = None,
+        relation_id: int | None = None,
     ) -> Any:
         """统一的阶段执行器：开始标记 → 执行 → 成功标记/失败处理"""
         stage_start = time.monotonic()
@@ -195,7 +211,9 @@ class ProcessingService:
                 error_message=str(e)
             )
             await self._ensure_history_and_fail(
-                hist_repo, processing_id, document_id, attempt_no, str(e)
+                hist_repo, processing_id,
+                relation_id if relation_id is not None else document_id,
+                attempt_no, str(e)
             )
             await db.commit()
 
@@ -209,7 +227,8 @@ class ProcessingService:
         self, db: AsyncSession,
         doc_repo: DocumentRepository,
         hist_repo: ProcessingHistoryRepository,
-        document_id: int, processing_id: str,
+        document_id: int, relation_id: int,
+        processing_id: str,
         attempt_no: int,
         stage_repo: StageResultRepository,
     ) -> Document | None:
@@ -238,14 +257,13 @@ class ProcessingService:
         proc = await hist_repo.get_by_processing_id(processing_id)
         if proc is None:
             proc = DocumentProcessingHistory(
-                document_id=document_id,
+                relation_id=relation_id,
                 processing_id=processing_id,
                 attempt_no=attempt_no,
             )
             await hist_repo.add(proc)
         proc.update_progress("check", 10)
         proc.started_at = datetime.now()
-        doc.add_processing_history(proc)
         return doc
 
     async def _parse_document(
@@ -287,15 +305,17 @@ class ProcessingService:
         stage_repo: StageResultRepository,
         document_id: int, processing_id: str,
         result: ParseResult, chunks: list,
+        relation_id: int,
     ) -> Dict:
-        """4.10.10 数据入库 — 6 步处理流程
+        """4.10.10 数据入库 — 7 步处理流程
 
-        1. 清理已有数据（PG/ES/Milvus/Neo4j）
-        2. PostgreSQL 事务写入（chunk + document + history + commit）
-        3. ES 索引写入
-        4. Milvus 向量写入
-        5. Neo4j 图谱写入
-        6. 步骤 3/4/5 失败处理：标记 history failed，残留数据不清
+        1. UPDATE document_version_relation.stored=false
+        2. 清理已有数据（PG/ES/Milvus/Neo4j）
+        3. PostgreSQL 事务写入（chunk + document + history + stored=true + commit）
+        4. ES 索引写入
+        5. Milvus 向量写入
+        6. Neo4j 图谱写入
+        7. 步骤 4/5/6 失败处理：标记 history failed，残留数据不清
         """
         doc = await doc_repo.get_by_id(document_id)
         document_id_str = str(document_id)
@@ -306,7 +326,12 @@ class ProcessingService:
         neo4j_svc = get_neo4j_service()
         chunk_repo = DocumentChunkRepository(db)
 
-        # ---- Step 1: 清理已有数据 ----
+        # ---- Step 1: 标记数据暂不可检索 ----
+        relation = await db.get(DocumentVersionRelation, relation_id)
+        if relation:
+            relation.stored = False
+
+        # ---- Step 2: 清理已有数据 ----
         try:
             await chunk_repo.delete_by_document_id(document_id)
             await db.commit()
@@ -328,7 +353,7 @@ class ProcessingService:
         except Exception as e:
             logger.warning(f"清理旧 Neo4j 数据失败: {e}")
 
-        # ---- Step 2: PostgreSQL 事务写入 ----
+        # ---- Step 3: PostgreSQL 事务写入 ----
         db_chunks: list = []
         total_token = 0
 
@@ -362,6 +387,7 @@ class ProcessingService:
                     page_range_start=page_start,
                     page_range_end=page_end,
                     section_title=chunk.section_title or "",
+                    enabled=doc.enabled if doc else True,
                 )
                 db_chunks.append(db_chunk)
                 total_token += processed_text_token_count + hq_token_count
@@ -375,6 +401,10 @@ class ProcessingService:
 
             proc = await hist_repo.get_by_processing_id(processing_id)
             proc.mark_succeeded()
+
+            # 标记数据可检索
+            if relation:
+                relation.stored = True
 
             await db.commit()
             logger.info(f"PostgreSQL 写入成功: document_id={document_id}, chunks={len(chunks)}")
@@ -395,6 +425,7 @@ class ProcessingService:
                 "chunk_id": chunk_id,
                 "document_id": document_id_str,
                 "processed_text": chunk.processed_text or "",
+                "enabled": doc.enabled if doc else True,
             })
             embed_text = chunk.processed_text or ""
             hq = chunk.hypothetical_questions or []
@@ -404,6 +435,7 @@ class ProcessingService:
                 "chunk_id": chunk_id,
                 "document_id": document_id_str,
                 "text": embed_text,
+                "enabled": doc.enabled if doc else True,
             })
             for rel in (chunk.relations or []):
                 neo4j_relations.append({
@@ -411,9 +443,10 @@ class ProcessingService:
                     "relationship": rel.relationship,
                     "target": rel.target,
                     "chunk_id": chunk_id,
+                    "enabled": doc.enabled if doc else True,
                 })
 
-        # ---- Step 3: ES 索引写入 ----
+        # ---- Step 4: ES 索引写入 ----
         external_error: str | None = None
         try:
             await es_svc.index_chunks(es_entries)
@@ -421,7 +454,7 @@ class ProcessingService:
             logger.error(f"ES 写入失败: {e}", exc_info=True)
             external_error = f"ES 写入失败: {e}"
 
-        # ---- Step 4: Milvus 向量写入 ----
+        # ---- Step 5: Milvus 向量写入 ----
         if external_error is None:
             try:
                 texts = [e["text"] for e in milvus_entries]
@@ -433,7 +466,7 @@ class ProcessingService:
                 logger.error(f"Milvus 写入失败: {e}", exc_info=True)
                 external_error = f"Milvus 写入失败: {e}"
 
-        # ---- Step 5: Neo4j 图谱写入 ----
+        # ---- Step 6: Neo4j 图谱写入 ----
         if external_error is None:
             try:
                 await neo4j_svc.write_graph(document_id_str, neo4j_relations)
@@ -441,7 +474,7 @@ class ProcessingService:
                 logger.error(f"Neo4j 写入失败: {e}", exc_info=True)
                 external_error = f"Neo4j 写入失败: {e}"
 
-        # ---- Step 6: 外部存储失败处理 ----
+        # ---- Step 7: 外部存储失败处理 ----
         if external_error is not None:
             await self._mark_history_failed(hist_repo, processing_id, external_error)
             return {"status": "failed", "error": external_error}
@@ -489,7 +522,7 @@ class ProcessingService:
 
         return {
             "processing_id": proc.processing_id,
-            "document_id": str(proc.document_id),
+            "relation_id": str(proc.relation_id),
             "attempt_no": proc.attempt_no,
             "status": proc.status,
             "current_stage": proc.current_stage,
@@ -541,7 +574,7 @@ class ProcessingService:
         }
 
     async def get_processing_view(
-        self, db: AsyncSession, document_ids: List[int]
+        self, db: AsyncSession, relation_ids: List[int]
     ) -> Dict:
         """多文档处理过程视图（DEG 4.16）"""
         doc_repo = DocumentRepository(db)
@@ -549,13 +582,19 @@ class ProcessingService:
         stage_repo = StageResultRepository(db)
         tabs = []
 
-        for doc_id in document_ids:
-            proc = await hist_repo.get_latest_by_document_id(doc_id)
+        for rel_id in relation_ids:
+            relation = await db.get(DocumentVersionRelation, rel_id)
+            if not relation:
+                continue
+
+            doc = await doc_repo.get_by_id(relation.document_id)
+            proc = await hist_repo.get_latest_by_relation_id(rel_id)
+
             if not proc:
-                doc = await doc_repo.get_by_id(doc_id)
                 if doc:
                     tabs.append({
-                        "document_id": doc_id,
+                        "relation_id": rel_id,
+                        "document_id": relation.document_id,
                         "document_name": doc.original_filename,
                         "processing_id": None,
                         "attempt_no": 0,
@@ -569,15 +608,15 @@ class ProcessingService:
             stage_records = await stage_repo.list_by_processing_id(proc.processing_id)
             completed_stages = {s.stage_name: s.status for s in stage_records}
 
-            doc = await doc_repo.get_by_id(doc_id)
             stages = []
             for name in STAGE_ORDER:
                 status = completed_stages.get(name, "pending")
                 stages.append({"name": name, "status": status})
 
             tabs.append({
-                "document_id": doc_id,
-                "document_name": doc.original_filename if doc else str(doc_id),
+                "relation_id": rel_id,
+                "document_id": relation.document_id,
+                "document_name": doc.original_filename if doc else str(relation.document_id),
                 "processing_id": proc.processing_id,
                 "attempt_no": proc.attempt_no,
                 "status": proc.status,
@@ -588,12 +627,95 @@ class ProcessingService:
 
         return {"tabs": tabs}
 
+    async def query_relations(
+        self,
+        db: AsyncSession,
+        page: int = 1,
+        page_size: int = 20,
+        document_id: int | None = None,
+        version_id: int | None = None,
+    ) -> Dict:
+        """文档-版本关联查询（DEG 4.4）"""
+        from knowlebase.repositories.relation_repository import RelationRepository
+        repo = RelationRepository(db)
+        data, total = await repo.list_with_filters(page, page_size, document_id, version_id)
+        return {
+            "data": data,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": (total + page_size - 1) // page_size if total > 0 else 0,
+        }
+
+    async def query_history(
+        self,
+        db: AsyncSession,
+        relation_id: int,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> Dict:
+        """处理记录查询（DEG 4.6）"""
+        hist_repo = ProcessingHistoryRepository(db)
+        items, total = await hist_repo.list_paginated(relation_id, page, page_size)
+        data = [{
+            "id": p.id,
+            "processing_id": p.processing_id,
+            "attempt_no": p.attempt_no,
+            "status": p.status,
+            "current_stage": p.current_stage,
+            "progress": p.progress,
+            "started_at": p.started_at.isoformat() if p.started_at else None,
+            "completed_at": p.completed_at.isoformat() if p.completed_at else None,
+            "error_message": p.error_message,
+        } for p in items]
+        return {
+            "data": data,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": (total + page_size - 1) // page_size if total > 0 else 0,
+        }
+
     # ---- 内部辅助 ----
+
+    async def _get_or_create_relation(
+        self, db: AsyncSession, document_id: int
+    ) -> DocumentVersionRelation | None:
+        """查找或创建文档与当前启用版本的关联记录"""
+        from knowlebase.models.knowledge_base_version import KnowledgeBaseVersion
+        ver_result = await db.execute(
+            select(KnowledgeBaseVersion).where(
+                KnowledgeBaseVersion.status == "enabled"
+            ).limit(1)
+        )
+        version = ver_result.scalar_one_or_none()
+        if not version:
+            return None
+
+        rel_result = await db.execute(
+            select(DocumentVersionRelation).where(
+                DocumentVersionRelation.document_id == document_id,
+                DocumentVersionRelation.version_id == version.id,
+            )
+        )
+        relation = rel_result.scalar_one_or_none()
+        if relation:
+            return relation
+
+        relation = DocumentVersionRelation(
+            document_id=document_id,
+            version_id=version.id,
+            relation_type="initial",
+            status="pending",
+        )
+        db.add(relation)
+        await db.flush()
+        return relation
 
     async def _ensure_history_and_fail(
         self,
         hist_repo: ProcessingHistoryRepository,
-        processing_id: str, document_id: int,
+        processing_id: str, relation_id: int,
         attempt_no: int, error_message: str,
     ) -> None:
         """确保处理历史存在并标记失败"""
@@ -601,7 +723,7 @@ class ProcessingService:
             proc = await hist_repo.get_by_processing_id(processing_id)
             if proc is None:
                 proc = DocumentProcessingHistory(
-                    document_id=document_id,
+                    relation_id=relation_id,
                     processing_id=processing_id,
                     attempt_no=attempt_no,
                 )

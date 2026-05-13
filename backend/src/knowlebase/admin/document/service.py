@@ -14,12 +14,15 @@ from pathlib import PurePath
 from typing import Dict, List, Optional, Tuple
 
 from fastapi import HTTPException, UploadFile, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from knowlebase.core.config import settings
 from knowlebase.models.document import Document, DocumentProcessingHistory
+from knowlebase.models.document_version_relation import DocumentVersionRelation
 from knowlebase.repositories import (
     DocumentRepository,
+    DocumentChunkRepository,
     ProcessingHistoryRepository,
 )
 from knowlebase.schemas.document import (
@@ -29,6 +32,20 @@ from knowlebase.schemas.document import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+async def _check_building_lock(db: AsyncSession) -> None:
+    """检查是否存在构建中的知识库版本，存在则禁止操作"""
+    from knowlebase.models.knowledge_base_version import KnowledgeBaseVersion
+    result = await db.execute(
+        select(KnowledgeBaseVersion).where(KnowledgeBaseVersion.status == "building").limit(1)
+    )
+    if result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": 400, "message": "知识库版本正在构建中，暂不支持此操作",
+                    "detail": {"code_name": "BUILDING_IN_PROGRESS"}},
+        )
 
 
 class UploadService:
@@ -134,10 +151,13 @@ class UploadService:
                 detail={"code": 400, "message": "上传文件不完整", "detail": detail},
             )
 
-        # 2. 格式/大小验证
+        # 2. 构建锁检查
+        await _check_building_lock(db)
+
+        # 3. 格式/大小验证
         await self.validate_file_format_and_size(original_filename, file_size)
 
-        # 3. 重复性检查
+        # 4. 重复性检查
         repo = DocumentRepository(db)
         existing = await repo.get_by_hash(calc_hash)
         if existing:
@@ -148,7 +168,7 @@ class UploadService:
                 "status": "duplicate",
             }
 
-        # 4. 存储 + 入库
+        # 5. 存储 + 入库
         return await self._store_and_persist(
             db, repo, content, original_filename, file_size, calc_hash, metadata
         )
@@ -301,8 +321,21 @@ class DocumentService:
         if not doc:
             return None
 
+        # 通过 document_version_relation 获取处理历史
         hist_repo = ProcessingHistoryRepository(db)
-        processings = await hist_repo.get_by_document_id(int(document_id))
+        relations_result = await db.execute(
+            select(DocumentVersionRelation).where(
+                DocumentVersionRelation.document_id == int(document_id)
+            )
+        )
+        relations = relations_result.scalars().all()
+
+        processings = []
+        for rel in relations:
+            rel_histories = await hist_repo.get_by_relation_id(rel.id)
+            processings.extend(rel_histories)
+        # 按 attempt_no 降序排列
+        processings.sort(key=lambda p: p.attempt_no, reverse=True)
 
         return {
             "document": {
@@ -315,7 +348,7 @@ class DocumentService:
                 "file_hash": doc.file_hash,
                 "status": doc.status,
                 "latest_processing_id": doc.processing_id,
-                "rebuild_id": doc.rebuild_id,
+                "build_id": doc.build_id,
                 "created_by": None,
                 "created_at": doc.created_at.isoformat() if doc.created_at else None,
                 "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
@@ -337,6 +370,7 @@ class DocumentService:
 
     async def enable_document(self, db: AsyncSession, document_id: str) -> None:
         """启用文档"""
+        await _check_building_lock(db)
         repo = DocumentRepository(db)
         doc = await repo.get_by_id(int(document_id))
         if not doc:
@@ -350,10 +384,13 @@ class DocumentService:
                 detail={"code": 400, "message": "文档已启用，无需重复操作"},
             )
         doc.enable()
+        chunk_repo = DocumentChunkRepository(db)
+        await chunk_repo.update_enabled_by_document_id(int(document_id), True)
         await db.commit()
 
     async def disable_document(self, db: AsyncSession, document_id: str) -> None:
         """停用文档"""
+        await _check_building_lock(db)
         repo = DocumentRepository(db)
         doc = await repo.get_by_id(int(document_id))
         if not doc:
@@ -367,12 +404,20 @@ class DocumentService:
                 detail={"code": 400, "message": "文档已停用，无需重复操作"},
             )
         doc.disable()
+        chunk_repo = DocumentChunkRepository(db)
+        await chunk_repo.update_enabled_by_document_id(int(document_id), False)
         await db.commit()
 
     async def process_documents(
         self, db: AsyncSession, document_ids: List[int]
     ) -> List[BatchResult]:
         """批量触发文档处理（DEG 4.10）"""
+        # 1. 构建锁检查
+        try:
+            await _check_building_lock(db)
+        except HTTPException:
+            return [BatchResult(id=str(doc_id), status="failed", reason="知识库版本正在构建中，暂不支持此操作") for doc_id in document_ids]
+
         doc_repo = DocumentRepository(db)
         hist_repo = ProcessingHistoryRepository(db)
         from knowlebase.admin.processing.service import get_processing_service
@@ -381,25 +426,42 @@ class DocumentService:
 
         for doc_id in document_ids:
             try:
+                # 2. 查询文档
                 doc = await doc_repo.get_by_id(doc_id)
                 if not doc:
                     results.append(BatchResult(id=str(doc_id), status="failed", reason="文档不存在"))
                     continue
 
-                if await hist_repo.has_active_processing(doc_id):
-                    results.append(BatchResult(id=str(doc_id), status="failed",
-                                                reason="文档正在处理中，请稍后再试"))
+                # 3. 查询/创建关联记录
+                relation = await processing_svc._get_or_create_relation(db, doc_id)
+                if not relation:
+                    results.append(BatchResult(id=str(doc_id), status="failed", reason="无启用的知识库版本"))
                     continue
 
-                new_attempt_no = await hist_repo.get_max_attempt_no(doc_id) + 1
+                # 4. 检查是否有正在进行的处理
+                if await hist_repo.has_active_processing(relation.id):
+                    results.append(BatchResult(id=str(doc_id), status="failed", reason="文档正在处理中，请稍后再试"))
+                    continue
+
+                # 5. 创建处理历史记录（同步，status=pending）
                 processing_id = f"proc_{uuid.uuid4().hex[:12]}"
+                attempt_no = (await hist_repo.get_max_attempt_no(relation.id)) + 1
+
+                proc = DocumentProcessingHistory(
+                    relation_id=relation.id,
+                    processing_id=processing_id,
+                    attempt_no=attempt_no,
+                    status="pending",
+                )
+                await hist_repo.add(proc)
 
                 doc.processing_id = processing_id
-                doc.attempt_no = new_attempt_no
+                doc.attempt_no = attempt_no
                 await db.flush()
 
+                # 6. 异步触发处理
                 asyncio.create_task(
-                    processing_svc.process_document(db, doc.id, processing_id, new_attempt_no)
+                    processing_svc.process_document(db, doc.id, processing_id, attempt_no, relation_id=relation.id)
                 )
 
                 results.append(BatchResult(

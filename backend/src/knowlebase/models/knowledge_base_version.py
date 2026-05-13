@@ -11,13 +11,12 @@ from sqlalchemy import (
     Column,
     String,
     Integer,
-    BigInteger,
+    Integer,
     Text,
     TIMESTAMP,
     Index,
 )
 from sqlalchemy.sql import func
-from sqlalchemy.orm import relationship
 
 from knowlebase.db.session import Base
 
@@ -33,27 +32,26 @@ class KnowledgeBaseVersion(Base):
 
     # 主键
     id = Column(
-        BigInteger,
+        Integer,
         primary_key=True,
         autoincrement=True,
         comment="版本唯一标识"
     )
 
-    # 版本标识
-    version_id = Column(
+    # 版本名称
+    version_name = Column(
         String(50),
         nullable=False,
         unique=True,
-        index=True,
-        comment="版本ID（时间戳格式 v20260422_103000）"
+        comment="版本名称（v+时间戳格式 v20260422_103000）"
     )
 
     # 状态
     status = Column(
         String(20),
         nullable=False,
-        default="building",
-        comment="版本状态：building|succeeded|enabled|disabled|failed"
+        default="init",
+        comment="版本状态：init|building|succeeded|enabled|disabled|failed"
     )
 
     # 统计信息
@@ -89,12 +87,12 @@ class KnowledgeBaseVersion(Base):
         TIMESTAMP(timezone=True),
         nullable=False,
         server_default=func.current_timestamp(),
-        comment="重建开始时间"
+        comment="开始时间"
     )
     completed_at = Column(
         TIMESTAMP(timezone=True),
         nullable=True,
-        comment="重建完成时间"
+        comment="完成时间"
     )
     created_at = Column(
         TIMESTAMP(timezone=True),
@@ -110,14 +108,6 @@ class KnowledgeBaseVersion(Base):
         comment="更新时间"
     )
 
-    # 关系
-    document_relations = relationship(
-        "DocumentVersionRelation",
-        back_populates="version",
-        cascade="all, delete-orphan",
-        lazy="selectin"
-    )
-
     # 索引
     __table_args__ = (
         Index("idx_kb_version_status", "status"),
@@ -128,7 +118,7 @@ class KnowledgeBaseVersion(Base):
         """将模型转换为字典"""
         return {
             "id": str(self.id),
-            "version_id": self.version_id,
+            "version_name": self.version_name,
             "status": self.status,
             "document_count": self.document_count,
             "chunk_count": self.chunk_count,
@@ -140,5 +130,39 @@ class KnowledgeBaseVersion(Base):
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
 
+    # ---- 领域方法 ----
+
+    def start_build(self) -> None:
+        """开始构建，校验 status 为 init 或 failed"""
+        status = self.status or "init"
+        if status not in ("init", "failed"):
+            raise ValueError(f"版本状态为 {self.status}，无法构建（需为 init 或 failed）")
+        self.status = "building"
+        self.started_at = datetime.now()
+
+    def complete_build(self, document_count: int, chunk_count: int) -> None:
+        """构建成功完成"""
+        if self.status != "building":
+            raise ValueError(f"版本状态为 {self.status}，无法完成构建（需为 building）")
+        self.status = "succeeded"
+        self.document_count = document_count
+        self.chunk_count = chunk_count
+        self.completed_at = datetime.now()
+
+    def fail_build(self, error_message: str) -> None:
+        """构建失败"""
+        if self.status != "building":
+            raise ValueError(f"版本状态为 {self.status}，无法标记失败（需为 building）")
+        self.status = "failed"
+        self.error_message = error_message
+        self.completed_at = datetime.now()
+
+    def enable(self) -> None:
+        """启用版本"""
+        if self.status not in ("succeeded", "disabled"):
+            raise ValueError(f"版本状态为 {self.status}，无法启用（需为 succeeded 或 disabled）")
+        self.status = "enabled"
+        self.updated_at = datetime.now()
+
     def __repr__(self):
-        return f"<KnowledgeBaseVersion(id={self.id}, version_id={self.version_id}, status={self.status})>"
+        return f"<KnowledgeBaseVersion(id={self.id}, version_name={self.version_name}, status={self.status})>"

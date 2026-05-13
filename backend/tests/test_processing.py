@@ -120,7 +120,7 @@ class TestGetProcessingStatus:
         mock_db = AsyncMock()
         proc = MagicMock()
         proc.processing_id = "proc_1"
-        proc.document_id = 1
+        proc.relation_id = 1
         proc.attempt_no = 1
         proc.status = "succeeded"
         proc.current_stage = "stored"
@@ -169,7 +169,13 @@ class TestGetProcessingView:
             patch("knowlebase.admin.processing.service.StageResultRepository") as mock_stage_cls,
         ):
             mock_doc, mock_hist, mock_stage = _make_mock_repos(mock_doc_cls, mock_hist_cls, mock_stage_cls)
-            mock_hist.get_latest_by_document_id = AsyncMock(return_value=None)
+
+            # Mock db.get for DocumentVersionRelation
+            mock_relation = MagicMock()
+            mock_relation.document_id = 1
+            mock_db.get = AsyncMock(return_value=mock_relation)
+
+            mock_hist.get_latest_by_relation_id = AsyncMock(return_value=None)
             mock_doc.get_by_id = AsyncMock(return_value=doc)
 
             result = await service.get_processing_view(mock_db, [1])
@@ -202,7 +208,13 @@ class TestGetProcessingView:
             patch("knowlebase.admin.processing.service.StageResultRepository") as mock_stage_cls,
         ):
             mock_doc, mock_hist, mock_stage = _make_mock_repos(mock_doc_cls, mock_hist_cls, mock_stage_cls)
-            mock_hist.get_latest_by_document_id = AsyncMock(return_value=proc)
+
+            # Mock db.get for DocumentVersionRelation
+            mock_relation = MagicMock()
+            mock_relation.document_id = 1
+            mock_db.get = AsyncMock(return_value=mock_relation)
+
+            mock_hist.get_latest_by_relation_id = AsyncMock(return_value=proc)
             mock_doc.get_by_id = AsyncMock(return_value=doc)
             mock_stage.list_by_processing_id = AsyncMock(return_value=[stage])
 
@@ -318,6 +330,7 @@ class TestStoreResults:
                 processing_id="proc_1",
                 result=MagicMock(),
                 chunks=chunks,
+                relation_id=1,
             )
 
             assert result["status"] == "success"
@@ -383,6 +396,7 @@ class TestStoreResults:
                 stage_repo=mock_stage_repo,
                 document_id=1, processing_id="proc_1",
                 result=MagicMock(), chunks=chunks,
+                relation_id=1,
             )
 
             assert result["status"] == "failed"
@@ -443,6 +457,7 @@ class TestStoreResults:
                 stage_repo=mock_stage_repo,
                 document_id=1, processing_id="proc_1",
                 result=MagicMock(), chunks=chunks,
+                relation_id=1,
             )
 
             assert result["status"] == "failed"
@@ -504,6 +519,7 @@ class TestStoreResults:
                 stage_repo=mock_stage_repo,
                 document_id=1, processing_id="proc_1",
                 result=MagicMock(), chunks=chunks,
+                relation_id=1,
             )
 
             assert result["status"] == "failed"
@@ -566,6 +582,7 @@ class TestStoreResults:
                 stage_repo=mock_stage_repo,
                 document_id=1, processing_id="proc_1",
                 result=MagicMock(), chunks=chunks,
+                relation_id=1,
             )
 
             assert result["status"] == "failed"

@@ -7,7 +7,7 @@ DocumentChunkRepository — 文档分块持久化操作
 import logging
 from typing import List
 
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from knowlebase.models.chunk import DocumentChunk
@@ -30,6 +30,14 @@ class DocumentChunkRepository:
         """按文档ID删除所有分块"""
         await self.db.execute(
             delete(DocumentChunk).where(DocumentChunk.document_id == document_id)
+        )
+
+    async def update_enabled_by_document_id(self, document_id: int, enabled: bool) -> None:
+        """按文档ID批量更新分块的 enabled 字段"""
+        await self.db.execute(
+            update(DocumentChunk)
+            .where(DocumentChunk.document_id == document_id)
+            .values(enabled=enabled)
         )
 
     async def list_by_document_id(self, document_id: int) -> List[DocumentChunk]:

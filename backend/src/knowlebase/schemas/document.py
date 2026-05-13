@@ -224,7 +224,7 @@ class DocumentDetail(BaseModel):
     file_hash: str = Field(..., description="文件MD5哈希值")
     status: str = Field(..., description="启用状态：enabled/disabled")
     latest_processing_id: Optional[str] = Field(None, description="最新处理任务ID")
-    rebuild_id: Optional[str] = Field(None, description="重建记录ID")
+    build_id: Optional[str] = Field(None, description="关联的构建记录ID")
     created_by: Optional[str] = Field(None, description="创建者")
     created_at: Optional[datetime] = Field(None, description="创建时间")
     updated_at: Optional[datetime] = Field(None, description="更新时间")

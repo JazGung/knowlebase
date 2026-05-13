@@ -1,6 +1,6 @@
 """知识库版本管理API端点
 
-包含版本列表、创建、启用、停用等API端点
+包含版本列表、新建、构建、启用等API端点
 """
 
 import logging
@@ -14,14 +14,11 @@ from knowlebase.db.session import get_db
 from knowlebase.schemas.version import (
     VersionListQuery,
     VersionCreateRequest,
+    VersionBuildRequest,
     VersionEnableRequest,
-    VersionDisableRequest,
-    VersionDeleteRequest,
     VersionListSuccessResponse,
-    VersionDetailSuccessResponse,
     VersionCreateSuccessResponse,
     VersionActionSuccessResponse,
-    SuccessResponse,
 )
 from knowlebase.admin.version.service import (
     VersionService,
@@ -83,45 +80,11 @@ async def list_versions(
         )
 
 
-@router.get(
-    "/detail",
-    response_model=VersionDetailSuccessResponse,
-    summary="版本详情查询",
-    description="查询知识库版本详情",
-    tags=["知识库版本管理"]
-)
-async def get_version_detail(
-    version_id: str = Query(..., description="版本ID（如 v20260422_103000）"),
-    db: AsyncSession = Depends(get_db),
-    version_service: VersionService = Depends(get_version_service),
-):
-    try:
-        version = await version_service.get_version_detail(db, version_id)
-        if not version:
-            return JSONResponse(
-                status_code=200,
-                content={"code": 404, "message": "版本不存在", "detail": f"version_id: {version_id}"}
-            )
-
-        return VersionDetailSuccessResponse(
-            code=0,
-            message="版本详情查询成功",
-            data={"version": version.to_dict()}
-        )
-
-    except Exception as e:
-        logger.error(f"版本详情查询失败: {e}", exc_info=True)
-        return JSONResponse(
-            status_code=200,
-            content={"code": 500, "message": "版本详情查询失败", "detail": str(e)}
-        )
-
-
 @router.post(
     "/create",
     response_model=VersionCreateSuccessResponse,
-    summary="创建重建版本",
-    description="创建新的知识库重建版本",
+    summary="版本新建",
+    description="创建新版本记录，状态初始化为 初始化",
     tags=["知识库版本管理"]
 )
 async def create_version(
@@ -138,7 +101,41 @@ async def create_version(
             code=0,
             message="版本创建成功",
             data={
-                "version_id": version.version_id,
+                "version_name": version.version_name,
+                "status": version.status,
+            }
+        )
+
+    except Exception as e:
+        logger.error(f"版本创建失败: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=200,
+            content={"code": 500, "message": "版本创建失败", "detail": str(e)}
+        )
+
+
+@router.post(
+    "/build",
+    response_model=VersionActionSuccessResponse,
+    summary="版本构建",
+    description="触发知识库构建，遍历所有已启用文档执行处理流水线",
+    tags=["知识库版本管理"]
+)
+async def build_version(
+    request: VersionBuildRequest,
+    db: AsyncSession = Depends(get_db),
+    version_service: VersionService = Depends(get_version_service),
+):
+    try:
+        version = await version_service.build_version(
+            db, version_name=request.version_name
+        )
+
+        return VersionActionSuccessResponse(
+            code=0,
+            message="版本构建已触发",
+            data={
+                "version_name": version.version_name,
                 "status": version.status,
             }
         )
@@ -149,18 +146,18 @@ async def create_version(
             content={"code": 400, "message": str(e)}
         )
     except Exception as e:
-        logger.error(f"版本创建失败: {e}", exc_info=True)
+        logger.error(f"版本构建失败: {e}", exc_info=True)
         return JSONResponse(
             status_code=200,
-            content={"code": 500, "message": "版本创建失败", "detail": str(e)}
+            content={"code": 500, "message": "版本构建失败", "detail": str(e)}
         )
 
 
 @router.put(
     "/enable",
     response_model=VersionActionSuccessResponse,
-    summary="启用版本",
-    description="启用知识库版本，使其成为当前检索可见的版本",
+    summary="版本启用",
+    description="启用指定版本，自动将当前启用版本改为已禁用",
     tags=["知识库版本管理"]
 )
 async def enable_version(
@@ -170,15 +167,15 @@ async def enable_version(
 ):
     try:
         old_version, new_version = await version_service.enable_version(
-            db, version_id=request.version_id
+            db, version_name=request.version_name
         )
 
         result_data = {
-            "version_id": new_version.version_id,
+            "version_name": new_version.version_name,
             "status": new_version.status,
         }
         if old_version:
-            result_data["previous_version"] = old_version.version_id
+            result_data["previous_version"] = old_version.version_name
 
         return VersionActionSuccessResponse(
             code=0,
@@ -196,43 +193,4 @@ async def enable_version(
         return JSONResponse(
             status_code=200,
             content={"code": 500, "message": "版本启用失败", "detail": str(e)}
-        )
-
-
-@router.put(
-    "/disable",
-    response_model=VersionActionSuccessResponse,
-    summary="停用版本",
-    description="停用知识库版本",
-    tags=["知识库版本管理"]
-)
-async def disable_version(
-    request: VersionDisableRequest,
-    db: AsyncSession = Depends(get_db),
-    version_service: VersionService = Depends(get_version_service),
-):
-    try:
-        version = await version_service.disable_version(
-            db, version_id=request.version_id
-        )
-
-        return VersionActionSuccessResponse(
-            code=0,
-            message="版本停用成功",
-            data={
-                "version_id": version.version_id,
-                "status": version.status,
-            }
-        )
-
-    except ValueError as e:
-        return JSONResponse(
-            status_code=200,
-            content={"code": 400, "message": str(e)}
-        )
-    except Exception as e:
-        logger.error(f"版本停用失败: {e}", exc_info=True)
-        return JSONResponse(
-            status_code=200,
-            content={"code": 500, "message": "版本停用失败", "detail": str(e)}
         )

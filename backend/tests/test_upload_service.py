@@ -228,7 +228,11 @@ class TestProcessUpload:
         existing_doc.id = "doc_existing_001"
         existing_doc.file_hash = file_hash
         existing_doc.original_filename = "existing.pdf"
-        mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=existing_doc)))
+        # building check None, then duplicate check returns existing
+        mock_db.execute = AsyncMock(side_effect=[
+            MagicMock(scalar_one_or_none=MagicMock(return_value=None)),
+            MagicMock(scalar_one_or_none=MagicMock(return_value=existing_doc)),
+        ])
 
         result = await service.process_upload(mock_db, mock_file, file_hash)
         assert result["status"] == "duplicate"
@@ -255,6 +259,7 @@ class TestProcessUpload:
         mock_file = make_mock_upload_file("test.png", content)
 
         mock_db = AsyncMock()
+        mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
 
         with pytest.raises(HTTPException) as exc_info:
             await service.process_upload(mock_db, mock_file, file_hash)
@@ -268,6 +273,7 @@ class TestProcessUpload:
         mock_file = make_mock_upload_file("big.pdf", content)
 
         mock_db = AsyncMock()
+        mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
 
         with pytest.raises(HTTPException) as exc_info:
             await service.process_upload(mock_db, mock_file, file_hash)
@@ -292,3 +298,23 @@ class TestProcessUpload:
         assert exc_info.value.status_code == 500
         # Verify orphaned file cleanup was attempted
         service.minio_service.delete_file.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_building_lock_blocks_upload(self, service):
+        content = b"test pdf content"
+        file_hash = compute_md5(content)
+        mock_file = make_mock_upload_file("test.pdf", content)
+
+        mock_db = AsyncMock()
+        building_version = MagicMock()
+        building_version.status = "building"
+        # First call: building check → building version exists
+        # Second call: duplicate check (won't be reached)
+        mock_db.execute = AsyncMock(return_value=MagicMock(
+            scalar_one_or_none=MagicMock(return_value=building_version)
+        ))
+
+        with pytest.raises(HTTPException) as exc_info:
+            await service.process_upload(mock_db, mock_file, file_hash)
+        assert exc_info.value.status_code == 400
+        assert "构建中" in str(exc_info.value.detail)

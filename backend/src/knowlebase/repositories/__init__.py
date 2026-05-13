@@ -8,10 +8,12 @@ from knowlebase.repositories.document_repository import DocumentRepository
 from knowlebase.repositories.processing_history_repository import ProcessingHistoryRepository
 from knowlebase.repositories.stage_result_repository import StageResultRepository
 from knowlebase.repositories.chunk_repository import DocumentChunkRepository
+from knowlebase.repositories.relation_repository import RelationRepository
 
 __all__ = [
     "DocumentRepository",
     "ProcessingHistoryRepository",
     "StageResultRepository",
     "DocumentChunkRepository",
+    "RelationRepository",
 ]
