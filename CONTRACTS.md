@@ -51,3 +51,28 @@ title: 跨领域契约
 - **文档停用**：设对应文档的所有 chunk/ES/Milvus/Neo4j 记录的 `enabled=false`，不删除数据
 - **检索/问答**：所有查询必须追加 `enabled=true` 过滤条件
 - **文档重新处理**：新写入的数据 `enabled` 值继承当前文档的启用状态
+
+---
+
+## 检索入口路径
+
+- **涉及领域**：构建域、检索域
+- **主题**：检索域通过三条路径查询构建域写入的知识库数据，统一收敛到 chunk_id 后从 PostgreSQL 获取完整原文
+
+### 检索路径
+
+所有检索路径最终汇聚到 PostgreSQL `document_chunk.processed_text`，作为 LLM 的上下文输入：
+
+1. **Elasticsearch 全文检索**：关键词匹配 → `chunk_id` → PostgreSQL → `processed_text`
+2. **Milvus 语义检索**：向量相似度 → `chunk_id` → PostgreSQL → `processed_text`
+3. **Neo4j 图谱检索**：实体匹配 → 沿 `{predicate}` 关系遍历获取 `chunk_id` → PostgreSQL → `processed_text`
+
+### 查询条件
+
+检索/问答时，所有路径必须追加以下过滤条件：
+- `stored=true`（数据已成功写入知识库）
+- `enabled=true`（数据未被停用）
+
+### 存储层 schema 来源
+
+存储层（ES、Milvus、Neo4j）的 schema 以构建域 DEG §4.4.8 为权威来源，检索域按该 schema 读取数据。
