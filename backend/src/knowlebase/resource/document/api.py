@@ -20,7 +20,7 @@ from knowlebase.schemas.document import (
     BaseResponse,
     BatchResult,
 )
-from knowlebase.admin.document.service import (
+from knowlebase.resource.document.service import (
     get_upload_service,
     UploadService,
     get_document_service,

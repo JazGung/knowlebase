@@ -18,7 +18,8 @@ from fastapi.responses import JSONResponse
 from knowlebase.core.config import settings
 from knowlebase.db.session import session_manager, initialize_database, Base
 from knowlebase.services.minio_service import init_minio
-from knowlebase.admin import build_router
+from knowlebase.resource import resource_router
+from knowlebase.build import build_router
 
 # 配置日志
 logging.basicConfig(
@@ -132,7 +133,10 @@ def create_app() -> FastAPI:
             }
         }
 
-    # 注册API路由
+    # 注册业务资源域路由
+    app.include_router(resource_router, prefix="/resource")
+
+    # 注册构建域路由
     app.include_router(build_router, prefix="/build")
 
     logger.info("FastAPI应用创建完成")

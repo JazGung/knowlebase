@@ -13,6 +13,10 @@ export default defineConfig({
       '/build': {
         target: 'http://localhost:8000',
         changeOrigin: true
+      },
+      '/resource': {
+        target: 'http://localhost:8000',
+        changeOrigin: true
       }
     }
   }

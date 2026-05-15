@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 
 from knowlebase.models.knowledge_base_version import KnowledgeBaseVersion
 from knowlebase.schemas.version import VersionStatus
-from knowlebase.admin.version.service import VersionService
+from knowlebase.resource.version.service import VersionService
 
 
 @pytest.fixture

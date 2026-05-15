@@ -1,4 +1,5 @@
-"""文档管理服务
+"""
+文档管理服务
 
 包含文档上传、管理、查询等业务逻辑。
 服务层作为薄编排层，委托 Repository 进行数据访问，委托领域对象处理业务逻辑。
@@ -222,8 +223,22 @@ class UploadService:
             await db.commit()
             await db.refresh(doc)
 
-            # 异步触发处理
-            from knowlebase.admin.processing.service import get_processing_service
+            # 9. 检查是否存在启用的知识库版本
+            from knowlebase.models.knowledge_base_version import KnowledgeBaseVersion
+            ver_result = await db.execute(
+                select(KnowledgeBaseVersion).where(KnowledgeBaseVersion.status == "enabled").limit(1)
+            )
+            if not ver_result.scalar_one_or_none():
+                return {
+                    "document_id": str(doc.id),
+                    "original_filename": original_filename,
+                    "file_hash": file_hash,
+                    "status": "success",
+                    "warning": "NO_ENABLED_VERSION",
+                }
+
+            # 10. 异步触发处理
+            from knowlebase.build.processing.service import get_processing_service
             asyncio.create_task(
                 get_processing_service().process_document(db, doc.id, processing_id, 1)
             )
@@ -412,7 +427,21 @@ class DocumentService:
         self, db: AsyncSession, document_ids: List[int]
     ) -> List[BatchResult]:
         """批量触发文档处理（DEG 4.10）"""
-        # 1. 构建锁检查
+        from knowlebase.models.knowledge_base_version import KnowledgeBaseVersion
+
+        # 1. 校验 document_ids 不为空
+        if not document_ids:
+            return []
+
+        # 2. 查询当前启用的版本
+        ver_result = await db.execute(
+            select(KnowledgeBaseVersion).where(KnowledgeBaseVersion.status == "enabled").limit(1)
+        )
+        version = ver_result.scalar_one_or_none()
+        if not version:
+            return [BatchResult(id=str(doc_id), status="failed", reason="暂无启用的知识库版本，请先创建并启用一个版本") for doc_id in document_ids]
+
+        # 3. 构建锁检查
         try:
             await _check_building_lock(db)
         except HTTPException:
@@ -420,19 +449,19 @@ class DocumentService:
 
         doc_repo = DocumentRepository(db)
         hist_repo = ProcessingHistoryRepository(db)
-        from knowlebase.admin.processing.service import get_processing_service
+        from knowlebase.build.processing.service import get_processing_service
         processing_svc = get_processing_service()
         results = []
 
         for doc_id in document_ids:
             try:
-                # 2. 查询文档
+                # 4. 查询文档
                 doc = await doc_repo.get_by_id(doc_id)
                 if not doc:
                     results.append(BatchResult(id=str(doc_id), status="failed", reason="文档不存在"))
                     continue
 
-                # 3. 查询/创建关联记录
+                # 4. 查询/创建关联记录
                 relation = await processing_svc._get_or_create_relation(db, doc_id)
                 if not relation:
                     results.append(BatchResult(id=str(doc_id), status="failed", reason="无启用的知识库版本"))
@@ -443,7 +472,7 @@ class DocumentService:
                     results.append(BatchResult(id=str(doc_id), status="failed", reason="文档正在处理中，请稍后再试"))
                     continue
 
-                # 5. 创建处理历史记录（同步，status=pending）
+                # 4. 创建处理历史记录（同步，status=pending）
                 processing_id = f"proc_{uuid.uuid4().hex[:12]}"
                 attempt_no = (await hist_repo.get_max_attempt_no(relation.id)) + 1
 
@@ -459,7 +488,7 @@ class DocumentService:
                 doc.attempt_no = attempt_no
                 await db.flush()
 
-                # 6. 异步触发处理
+                # 5. 调用构建域异步触发处理
                 asyncio.create_task(
                     processing_svc.process_document(db, doc.id, processing_id, attempt_no, relation_id=relation.id)
                 )

@@ -7,7 +7,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import HTTPException
 
-from knowlebase.admin.document.service import UploadService
+from knowlebase.resource.document.service import UploadService
 
 
 def make_mock_upload_file(filename: str, content: bytes, content_type: str = "application/octet-stream"):

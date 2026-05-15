@@ -1,20 +1,14 @@
 /**
  * 后端 API 调用封装
- * 所有请求通过 Vite 代理转发到后端
+ * 业务资源域: /resource/*   构建域: /build/*
  */
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
 
-/**
- * 通用请求处理
- * 后端统一返回 HTTP 200，通过 body.code 判断业务成功/失败
- */
 async function request(url, options = {}) {
   const res = await fetch(BASE_URL + url, {
     ...options,
-    headers: {
-      ...options.headers,
-    },
+    headers: { ...options.headers },
   })
 
   if (!res.ok) {
@@ -27,8 +21,6 @@ async function request(url, options = {}) {
 
   const data = await res.json()
 
-  // 检查业务错误码（后端统一返回 HTTP 200，业务错误通过 code 区分）
-  // 成功码为字符串 "000000"，警告码 "0xxxxx"，错误码 "1xxxxx~9xxxxx"
   if (data.code !== "000000") {
     const error = new Error(data.description || `业务错误 code=${data.code}`)
     error.code = data.code
@@ -39,51 +31,33 @@ async function request(url, options = {}) {
   return data
 }
 
-// ==================== 文档检查 ====================
+// ==================== 业务资源域 - 文档管理 ====================
 
-/**
- * POST /build/document/check - 批量重复检查
- * @param {Array<{filename: string, hash: string}>} files
- */
-export async function checkDuplicates(files) {
-  const res = await request('/build/document/check', {
+/** POST /resource/document/check - 批量重复检查 */
+export async function checkDuplicates(hashes) {
+  const res = await request('/resource/document/check', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ files }),
+    body: JSON.stringify({ hashes }),
   })
-  return res.content || { duplicate_files: [] }
+  return res.content || { duplicates: [] }
 }
 
-// ==================== 文件上传 ====================
-
-/**
- * POST /build/document/upload - 单文件上传
- * @param {File} file - 文件对象
- * @param {string} hash - MD5 hex 字符串
- * @param {Object} metadata - 可选元数据 {title, description, category, tags}
- */
+/** POST /resource/document/upload - 单文件上传 */
 export async function uploadFile(file, hash, metadata = {}) {
   const formData = new FormData()
   formData.append('file', file)
   formData.append('hash', hash)
   if (metadata.title) formData.append('title', metadata.title)
-  if (metadata.description) formData.append('description', metadata.description)
-  if (metadata.category) formData.append('category', metadata.category)
-  if (metadata.tags) formData.append('tags', metadata.tags)
 
-  const res = await request('/build/document/upload', {
+  const res = await request('/resource/document/upload', {
     method: 'POST',
     body: formData,
   })
   return res.content
 }
 
-// ==================== 文档管理 ====================
-
-/**
- * GET /build/document/list - 文档列表
- * @param {Object} params - 查询参数 {page, page_size, status, enabled, search, sort_by, order}
- */
+/** GET /resource/document/list - 文档列表 */
 export async function getDocumentList(params = {}) {
   const query = new URLSearchParams()
   for (const [key, value] of Object.entries(params)) {
@@ -91,63 +65,46 @@ export async function getDocumentList(params = {}) {
       query.append(key, value)
     }
   }
-  const url = `/build/document/list?${query.toString()}`
-  const res = await request(url)
-  return res.content || { documents: [], pagination: { total: 0, page: 1, page_size: 20, total_pages: 0 } }
+  const res = await request(`/resource/document/list?${query.toString()}`)
+  return res.content || { data: [], total: 0, page: 1, page_size: 20, total_pages: 0 }
 }
 
-/**
- * GET /build/document/detail - 文档详情
- * @param {string} documentId
- */
+/** GET /resource/document/detail - 文档详情 */
 export async function getDocumentDetail(documentId) {
-  const res = await request(`/build/document/detail?document_id=${encodeURIComponent(documentId)}`)
+  const res = await request(`/resource/document/detail?document_id=${encodeURIComponent(documentId)}`)
   return res.content
 }
 
-/**
- * PUT /build/document/enable - 启用文档
- * @param {string} documentId
- */
-export async function enableDocument(documentId) {
-  return request('/build/document/enable', {
+/** PUT /resource/document/enable - 批量启用文档 */
+export async function enableDocuments(documentIds) {
+  return request('/resource/document/enable', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ document_id: documentId }),
+    body: JSON.stringify({ document_ids: documentIds }),
   })
 }
 
-/**
- * PUT /build/document/disable - 停用文档
- * @param {string} documentId
- */
-export async function disableDocument(documentId) {
-  return request('/build/document/disable', {
+/** PUT /resource/document/disable - 批量停用文档 */
+export async function disableDocuments(documentIds) {
+  return request('/resource/document/disable', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ document_id: documentId }),
+    body: JSON.stringify({ document_ids: documentIds }),
   })
 }
 
-/**
- * POST /build/document/reprocess - 重新处理文档
- * @param {string} documentId
- * @param {boolean} forceReprocess
- */
-export async function reprocessDocument(documentId, forceReprocess = false) {
-  return request('/build/document/reprocess', {
+/** POST /resource/document/process - 批量触发文档处理 */
+export async function processDocuments(documentIds) {
+  return request('/resource/document/process', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ document_id: documentId, force_reprocess: forceReprocess }),
+    body: JSON.stringify({ document_ids: documentIds }),
   })
 }
 
-// ==================== 知识库版本管理 ====================
+// ==================== 业务资源域 - 版本管理 ====================
 
-/**
- * GET /build/version/list - 版本列表
- * @param {Object} params - {page, page_size, status}
- */
+/** GET /resource/version/list - 版本列表 */
 export async function getVersionList(params = {}) {
   const query = new URLSearchParams()
   for (const [key, value] of Object.entries(params)) {
@@ -155,52 +112,81 @@ export async function getVersionList(params = {}) {
       query.append(key, value)
     }
   }
-  const url = `/build/version/list?${query.toString()}`
-  const res = await request(url)
-  return res.content || { versions: [], total: 0, page: 1, page_size: 20 }
+  const res = await request(`/resource/version/list?${query.toString()}`)
+  return res.content || { data: [], total: 0, page: 1, page_size: 20 }
 }
 
-/**
- * GET /build/version/detail - 版本详情
- * @param {string} versionId
- */
-export async function getVersionDetail(versionId) {
-  const res = await request(`/build/version/detail?version_id=${encodeURIComponent(versionId)}`)
-  return res.content
-}
-
-/**
- * POST /build/version/create - 创建重建版本
- * @param {Object} data - {created_by?: string}
- */
+/** POST /resource/version/create - 创建版本 */
 export async function createVersion(data = {}) {
-  return request('/build/version/create', {
+  return request('/resource/version/create', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   })
 }
 
-/**
- * PUT /build/version/enable - 启用版本
- * @param {string} versionId
- */
-export async function enableVersion(versionId) {
-  return request('/build/version/enable', {
-    method: 'PUT',
+/** POST /resource/version/build - 版本构建 */
+export async function buildVersion(versionName) {
+  return request('/resource/version/build', {
+    method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ version_id: versionId }),
+    body: JSON.stringify({ version_name: versionName }),
   })
 }
 
-/**
- * PUT /build/version/disable - 停用版本
- * @param {string} versionId
- */
-export async function disableVersion(versionId) {
-  return request('/build/version/disable', {
+/** PUT /resource/version/enable - 启用版本 */
+export async function enableVersion(versionName) {
+  return request('/resource/version/enable', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ version_id: versionId }),
+    body: JSON.stringify({ version_name: versionName }),
   })
+}
+
+// ==================== 业务资源域 - 关联查询 ====================
+
+/** GET /resource/relation/list - 文档-版本关联查询 */
+export async function getRelationList(params = {}) {
+  const query = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== '') {
+      query.append(key, value)
+    }
+  }
+  const res = await request(`/resource/relation/list?${query.toString()}`)
+  return res.content || { data: [], total: 0, page: 1, page_size: 20, total_pages: 0 }
+}
+
+// ==================== 构建域 ====================
+
+/** GET /build/history/list - 处理记录查询 */
+export async function getProcessingHistory(relationId, params = {}) {
+  const query = new URLSearchParams({ relation_id: relationId })
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== '') {
+      query.append(key, value)
+    }
+  }
+  const res = await request(`/build/history/list?${query.toString()}`)
+  return res.content || { data: [], total: 0, page: 1, page_size: 20, total_pages: 0 }
+}
+
+/** GET /build/stage/{processing_id}/{stage_name} - 阶段结果详情 */
+export async function getStageResult(processingId, stageName) {
+  const res = await request(`/build/stage/${encodeURIComponent(processingId)}/${encodeURIComponent(stageName)}`)
+  return res.content
+}
+
+/** GET /build/detail - 处理详情视图 (relation_ids 或 processing_id) */
+export async function getProcessingDetail({ relationIds, processingId } = {}) {
+  const query = new URLSearchParams()
+  if (relationIds) query.append('relation_ids', relationIds)
+  if (processingId) query.append('processing_id', processingId)
+  const res = await request(`/build/detail?${query.toString()}`)
+  return res.content
+}
+
+/** GET /build/stream/{processing_id} - 处理进度 SSE 流 */
+export function createProcessingStream(processingId) {
+  return new EventSource(`${BASE_URL}/build/stream/${encodeURIComponent(processingId)}`)
 }

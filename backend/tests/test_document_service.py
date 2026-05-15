@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi import HTTPException
 
-from knowlebase.admin.document.service import DocumentService
+from knowlebase.resource.document.service import DocumentService
 from knowlebase.schemas.document import DocumentListQuery
 
 
@@ -73,7 +73,7 @@ class TestGetDocumentList:
     @pytest.mark.asyncio
     async def test_empty_list(self, service):
         mock_db = AsyncMock()
-        with patch("knowlebase.admin.document.service.DocumentRepository") as mock_repo_cls:
+        with patch("knowlebase.resource.document.service.DocumentRepository") as mock_repo_cls:
             mock_repo = MagicMock()
             mock_repo.list_with_filters = AsyncMock(return_value=([], 0))
             mock_repo_cls.return_value = mock_repo
@@ -86,7 +86,7 @@ class TestGetDocumentList:
     async def test_with_documents(self, service):
         mock_db = AsyncMock()
         doc = make_mock_document()
-        with patch("knowlebase.admin.document.service.DocumentRepository") as mock_repo_cls:
+        with patch("knowlebase.resource.document.service.DocumentRepository") as mock_repo_cls:
             mock_repo = MagicMock()
             mock_repo.list_with_filters = AsyncMock(return_value=([doc], 1))
             mock_repo_cls.return_value = mock_repo
@@ -98,7 +98,7 @@ class TestGetDocumentList:
     @pytest.mark.asyncio
     async def test_search_passed_to_repo(self, service):
         mock_db = AsyncMock()
-        with patch("knowlebase.admin.document.service.DocumentRepository") as mock_repo_cls:
+        with patch("knowlebase.resource.document.service.DocumentRepository") as mock_repo_cls:
             mock_repo = MagicMock()
             mock_repo.list_with_filters = AsyncMock(return_value=([], 0))
             mock_repo_cls.return_value = mock_repo
@@ -111,7 +111,7 @@ class TestGetDocumentList:
     async def test_status_filter_passed_to_repo(self, service):
         mock_db = AsyncMock()
         from knowlebase.schemas.document import DocumentStatus
-        with patch("knowlebase.admin.document.service.DocumentRepository") as mock_repo_cls:
+        with patch("knowlebase.resource.document.service.DocumentRepository") as mock_repo_cls:
             mock_repo = MagicMock()
             mock_repo.list_with_filters = AsyncMock(return_value=([], 0))
             mock_repo_cls.return_value = mock_repo
@@ -130,8 +130,8 @@ class TestGetDocumentDetail:
         proc = make_mock_processing()
 
         with (
-            patch("knowlebase.admin.document.service.DocumentRepository") as mock_doc_cls,
-            patch("knowlebase.admin.document.service.ProcessingHistoryRepository") as mock_hist_cls,
+            patch("knowlebase.resource.document.service.DocumentRepository") as mock_doc_cls,
+            patch("knowlebase.resource.document.service.ProcessingHistoryRepository") as mock_hist_cls,
         ):
             mock_doc, mock_hist = _patch_repos(mock_doc_cls, mock_hist_cls)
             mock_doc.get_by_id = AsyncMock(return_value=doc)
@@ -155,7 +155,7 @@ class TestGetDocumentDetail:
     @pytest.mark.asyncio
     async def test_nonexistent_document(self, service):
         mock_db = AsyncMock()
-        with patch("knowlebase.admin.document.service.DocumentRepository") as mock_doc_cls:
+        with patch("knowlebase.resource.document.service.DocumentRepository") as mock_doc_cls:
             mock_doc_cls.return_value.get_by_id = AsyncMock(return_value=None)
 
             result = await service.get_document_detail(mock_db, "999")
@@ -166,8 +166,8 @@ class TestGetDocumentDetail:
         mock_db = AsyncMock()
         doc = make_mock_document()
         with (
-            patch("knowlebase.admin.document.service.DocumentRepository") as mock_doc_cls,
-            patch("knowlebase.admin.document.service.ProcessingHistoryRepository") as mock_hist_cls,
+            patch("knowlebase.resource.document.service.DocumentRepository") as mock_doc_cls,
+            patch("knowlebase.resource.document.service.ProcessingHistoryRepository") as mock_hist_cls,
         ):
             mock_doc, mock_hist = _patch_repos(mock_doc_cls, mock_hist_cls)
             mock_doc.get_by_id = AsyncMock(return_value=doc)
@@ -192,8 +192,8 @@ class TestEnableDocument:
         doc = make_mock_document(overrides={"status": "disabled"})
 
         with (
-            patch("knowlebase.admin.document.service.DocumentRepository") as mock_repo_cls,
-            patch("knowlebase.admin.document.service.DocumentChunkRepository") as mock_chunk_cls,
+            patch("knowlebase.resource.document.service.DocumentRepository") as mock_repo_cls,
+            patch("knowlebase.resource.document.service.DocumentChunkRepository") as mock_chunk_cls,
         ):
             mock_repo_cls.return_value.get_by_id = AsyncMock(return_value=doc)
             mock_chunk = MagicMock()
@@ -209,7 +209,7 @@ class TestEnableDocument:
     async def test_enable_nonexistent_document(self, service):
         mock_db = AsyncMock()
         mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
-        with patch("knowlebase.admin.document.service.DocumentRepository") as mock_repo_cls:
+        with patch("knowlebase.resource.document.service.DocumentRepository") as mock_repo_cls:
             mock_repo_cls.return_value.get_by_id = AsyncMock(return_value=None)
 
             with pytest.raises(HTTPException) as exc_info:
@@ -221,7 +221,7 @@ class TestEnableDocument:
         mock_db = AsyncMock()
         doc = make_mock_document(overrides={"status": "enabled"})
 
-        with patch("knowlebase.admin.document.service.DocumentRepository") as mock_repo_cls:
+        with patch("knowlebase.resource.document.service.DocumentRepository") as mock_repo_cls:
             mock_repo_cls.return_value.get_by_id = AsyncMock(return_value=doc)
 
             with pytest.raises(HTTPException) as exc_info:
@@ -252,8 +252,8 @@ class TestDisableDocument:
         doc = make_mock_document(overrides={"status": "enabled"})
 
         with (
-            patch("knowlebase.admin.document.service.DocumentRepository") as mock_repo_cls,
-            patch("knowlebase.admin.document.service.DocumentChunkRepository") as mock_chunk_cls,
+            patch("knowlebase.resource.document.service.DocumentRepository") as mock_repo_cls,
+            patch("knowlebase.resource.document.service.DocumentChunkRepository") as mock_chunk_cls,
         ):
             mock_repo_cls.return_value.get_by_id = AsyncMock(return_value=doc)
             mock_chunk = MagicMock()
@@ -269,7 +269,7 @@ class TestDisableDocument:
     async def test_disable_nonexistent_document(self, service):
         mock_db = AsyncMock()
         mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
-        with patch("knowlebase.admin.document.service.DocumentRepository") as mock_repo_cls:
+        with patch("knowlebase.resource.document.service.DocumentRepository") as mock_repo_cls:
             mock_repo_cls.return_value.get_by_id = AsyncMock(return_value=None)
 
             with pytest.raises(HTTPException) as exc_info:
@@ -281,7 +281,7 @@ class TestDisableDocument:
         mock_db = AsyncMock()
         doc = make_mock_document(overrides={"status": "disabled"})
 
-        with patch("knowlebase.admin.document.service.DocumentRepository") as mock_repo_cls:
+        with patch("knowlebase.resource.document.service.DocumentRepository") as mock_repo_cls:
             mock_repo_cls.return_value.get_by_id = AsyncMock(return_value=doc)
 
             with pytest.raises(HTTPException) as exc_info:
@@ -303,6 +303,19 @@ class TestDisableDocument:
         assert "构建中" in str(exc_info.value.detail)
 
 
+def _make_execute_side_effect(enabled_version=True, building_version=None):
+    """Helper: returns a side_effect for mock_db.execute
+    - 1st call: KnowledgeBaseVersion where status='enabled'
+    - 2nd call: KnowledgeBaseVersion where status='building'
+    """
+    enabled = MagicMock() if enabled_version else None
+    building = MagicMock() if building_version else None
+    return AsyncMock(side_effect=[
+        MagicMock(scalar_one_or_none=MagicMock(return_value=enabled)),
+        MagicMock(scalar_one_or_none=MagicMock(return_value=building)),
+    ])
+
+
 class TestProcessDocuments:
 
     @pytest.mark.asyncio
@@ -313,15 +326,15 @@ class TestProcessDocuments:
         mock_db.flush = AsyncMock()
 
         with (
-            patch("knowlebase.admin.document.service.DocumentRepository") as mock_doc_cls,
-            patch("knowlebase.admin.document.service.ProcessingHistoryRepository") as mock_hist_cls,
-            patch("knowlebase.admin.processing.service.get_processing_service") as mock_get_ps,
-            patch("knowlebase.admin.document.service.asyncio.create_task") as mock_task,
+            patch("knowlebase.resource.document.service.DocumentRepository") as mock_doc_cls,
+            patch("knowlebase.resource.document.service.ProcessingHistoryRepository") as mock_hist_cls,
+            patch("knowlebase.build.processing.service.get_processing_service") as mock_get_ps,
+            patch("knowlebase.resource.document.service.asyncio.create_task") as mock_task,
         ):
             mock_doc, mock_hist = _patch_repos(mock_doc_cls, mock_hist_cls)
             mock_doc.get_by_id = AsyncMock(return_value=doc)
-            # building lock check → no building version
-            mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
+            # enabled version exists, no building lock
+            mock_db.execute = _make_execute_side_effect(enabled_version=True, building_version=None)
             mock_hist.has_active_processing = AsyncMock(return_value=False)
             mock_hist.get_max_attempt_no = AsyncMock(return_value=0)
             mock_hist.add = AsyncMock(return_value=None)
@@ -347,14 +360,14 @@ class TestProcessDocuments:
         mock_db.flush = AsyncMock()
 
         with (
-            patch("knowlebase.admin.document.service.DocumentRepository") as mock_doc_cls,
-            patch("knowlebase.admin.document.service.ProcessingHistoryRepository") as mock_hist_cls,
-            patch("knowlebase.admin.processing.service.get_processing_service") as mock_get_ps,
-            patch("knowlebase.admin.document.service.asyncio.create_task") as mock_task,
+            patch("knowlebase.resource.document.service.DocumentRepository") as mock_doc_cls,
+            patch("knowlebase.resource.document.service.ProcessingHistoryRepository") as mock_hist_cls,
+            patch("knowlebase.build.processing.service.get_processing_service") as mock_get_ps,
+            patch("knowlebase.resource.document.service.asyncio.create_task") as mock_task,
         ):
             mock_doc, mock_hist = _patch_repos(mock_doc_cls, mock_hist_cls)
             mock_doc.get_by_id = AsyncMock(return_value=doc)
-            mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
+            mock_db.execute = _make_execute_side_effect(enabled_version=True, building_version=None)
             mock_hist.has_active_processing = AsyncMock(return_value=False)
             mock_hist.get_max_attempt_no = AsyncMock(return_value=3)
             mock_hist.add = AsyncMock(return_value=None)
@@ -371,13 +384,25 @@ class TestProcessDocuments:
     @pytest.mark.asyncio
     async def test_process_nonexistent_document(self, service):
         mock_db = AsyncMock()
-        mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
-        with patch("knowlebase.admin.document.service.DocumentRepository") as mock_repo_cls:
+        # enabled version exists, no building lock → per-doc check fails
+        mock_db.execute = _make_execute_side_effect(enabled_version=True, building_version=None)
+        with patch("knowlebase.resource.document.service.DocumentRepository") as mock_repo_cls:
             mock_repo_cls.return_value.get_by_id = AsyncMock(return_value=None)
 
             results = await service.process_documents(mock_db, [999])
             assert results[0].status == "failed"
             assert "不存在" in results[0].reason
+
+    @pytest.mark.asyncio
+    async def test_process_no_enabled_version(self, service):
+        mock_db = AsyncMock()
+        # no enabled version → early return for ALL documents
+        mock_db.execute = _make_execute_side_effect(enabled_version=False, building_version=None)
+
+        with patch("knowlebase.resource.document.service.DocumentRepository") as mock_repo_cls:
+            results = await service.process_documents(mock_db, [123])
+            assert results[0].status == "failed"
+            assert "暂无启用的知识库版本" in results[0].reason
 
     @pytest.mark.asyncio
     async def test_process_blocked_by_building(self, service):
@@ -398,12 +423,12 @@ class TestProcessDocuments:
         mock_db = AsyncMock()
         doc = make_mock_document()
         mock_db.flush = AsyncMock()
-        mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
+        mock_db.execute = _make_execute_side_effect(enabled_version=True, building_version=None)
 
         with (
-            patch("knowlebase.admin.document.service.DocumentRepository") as mock_doc_cls,
-            patch("knowlebase.admin.document.service.ProcessingHistoryRepository") as mock_hist_cls,
-            patch("knowlebase.admin.processing.service.get_processing_service") as mock_get_ps,
+            patch("knowlebase.resource.document.service.DocumentRepository") as mock_doc_cls,
+            patch("knowlebase.resource.document.service.ProcessingHistoryRepository") as mock_hist_cls,
+            patch("knowlebase.build.processing.service.get_processing_service") as mock_get_ps,
         ):
             mock_doc, mock_hist = _patch_repos(mock_doc_cls, mock_hist_cls)
             mock_doc.get_by_id = AsyncMock(return_value=doc)

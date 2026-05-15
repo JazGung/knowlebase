@@ -117,7 +117,7 @@ check(req.force_reprocess is False, "ReprocessDocumentRequest default force=Fals
 
 # ============ API Routes ============
 print("\n--- API Routes ---")
-from knowlebase.admin.document.api import router
+from knowlebase.resource.document.api import router
 route_paths = {route.path: list(route.methods) for route in router.routes}
 expected = {"/check", "/upload", "/list", "/detail", "/enable", "/disable", "/reprocess"}
 check(expected == set(route_paths.keys()), f"All 7 routes registered (got {set(route_paths.keys())})")
@@ -131,7 +131,7 @@ check("POST" in route_paths["/reprocess"], "POST /reprocess")
 
 # ============ UploadService ============
 print("\n--- UploadService ---")
-from knowlebase.admin.document.service import UploadService
+from knowlebase.resource.document.service import UploadService
 from fastapi import HTTPException
 
 def md5(data):
@@ -321,7 +321,7 @@ asyncio.run(run_upload_tests())
 
 # ============ DocumentService ============
 print("\n--- DocumentService ---")
-from knowlebase.admin.document.service import DocumentService
+from knowlebase.resource.document.service import DocumentService
 
 async def run_document_service_tests():
     service = DocumentService()

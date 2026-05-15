@@ -1,4 +1,5 @@
-"""知识库版本管理API端点
+"""
+知识库版本管理API端点
 
 包含版本列表、新建、构建、启用等API端点
 """
@@ -20,7 +21,7 @@ from knowlebase.schemas.version import (
     VersionCreateSuccessResponse,
     VersionActionSuccessResponse,
 )
-from knowlebase.admin.version.service import (
+from knowlebase.resource.version.service import (
     VersionService,
     get_version_service,
 )

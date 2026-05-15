@@ -233,9 +233,9 @@ import UploadDialog from '../components/UploadDialog.vue'
 import {
   getDocumentList,
   getDocumentDetail,
-  enableDocument,
-  disableDocument,
-  reprocessDocument,
+  enableDocuments,
+  disableDocuments,
+  processDocuments,
 } from '../api.js'
 
 // 视图模式
@@ -336,10 +336,10 @@ async function handleToggleEnable(row, enable) {
   // 执行操作
   try {
     if (enable) {
-      await enableDocument(row.id)
+      await enableDocuments([row.id])
       ElMessage.success('文档已启用')
     } else {
-      await disableDocument(row.id)
+      await disableDocuments([row.id])
       ElMessage.success('文档已停用')
     }
     loadDocuments()
@@ -370,9 +370,9 @@ async function handleBatchEnable(enable) {
     )
     for (const row of rowsToProcess) {
       if (enable) {
-        await enableDocument(row.id)
+        await enableDocuments([row.id])
       } else {
-        await disableDocument(row.id)
+        await disableDocuments([row.id])
       }
     }
     ElMessage.success(`已${enable ? '启用' : '停用'} ${rowsToProcess.length} 个文档`)
@@ -401,8 +401,13 @@ async function handleReprocessSingle(documentId) {
 
   try {
     await ElMessageBox.confirm(`确定要重新处理文档「${row.original_filename}」吗？`, '确认操作', { type: 'warning' })
-    const result = await reprocessDocument(documentId, false)
-    ElMessage.success(`已发起重新处理，任务ID: ${result.content?.processing_id || '未知'}`)
+    const result = await processDocuments([documentId])
+    const r = result.content?.results?.[0]
+    if (r?.status === 'success') {
+      ElMessage.success(`已发起处理`)
+    } else {
+      ElMessage.error(r?.reason || '处理失败')
+    }
     loadDocuments()
   } catch (err) {
     if (err?.name === 'Cancel') {

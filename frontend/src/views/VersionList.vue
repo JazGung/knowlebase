@@ -152,7 +152,7 @@ import {
   getVersionDetail,
   createVersion,
   enableVersion,
-  disableVersion,
+  buildVersion,
 } from '../api.js'
 
 // 版本列表
@@ -245,7 +245,7 @@ async function handleEnable() {
       '确认操作',
       { type: 'success' }
     )
-    await enableVersion(row.version_id)
+    await enableVersion(row.version_name)
     ElMessage.success('版本已启用')
     loadVersions()
   } catch (err) {
@@ -260,8 +260,8 @@ async function handleDisable() {
   if (!row) return
 
   try {
-    await ElMessageBox.confirm(`确定要停用版本「${row.version_id}」吗？`, '确认操作', { type: 'warning' })
-    await disableVersion(row.version_id)
+    await ElMessageBox.confirm(`确定要构建版本「${row.version_name}」吗？`, '确认操作', { type: 'warning' })
+    await buildVersion(row.version_name)
     ElMessage.success('版本已停用')
     loadVersions()
   } catch (err) {

@@ -8,7 +8,7 @@
 
 import pytest
 
-from knowlebase.admin.document.api import router
+from knowlebase.resource.document.api import router
 
 
 class TestDocumentEndpointsReachable:

@@ -5,7 +5,8 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from knowlebase.admin.processing.service import ProcessingService
+from knowlebase.build.processing.service import ProcessingService
+from knowlebase.build.query.service import ProcessingQueryService
 from knowlebase.events import DocumentProcessingEvent
 
 
@@ -32,10 +33,10 @@ class TestRunStage:
         mock_db.commit = AsyncMock()
 
         with (
-            patch("knowlebase.admin.processing.service.DocumentRepository") as mock_doc_cls,
-            patch("knowlebase.admin.processing.service.ProcessingHistoryRepository") as mock_hist_cls,
-            patch("knowlebase.admin.processing.service.StageResultRepository") as mock_stage_cls,
-            patch("knowlebase.admin.processing.service.get_event_bus") as mock_eb,
+            patch("knowlebase.build.processing.service.DocumentRepository") as mock_doc_cls,
+            patch("knowlebase.build.processing.service.ProcessingHistoryRepository") as mock_hist_cls,
+            patch("knowlebase.build.processing.service.StageResultRepository") as mock_stage_cls,
+            patch("knowlebase.build.processing.service.get_event_bus") as mock_eb,
         ):
             mock_doc, mock_hist, mock_stage = _make_mock_repos(mock_doc_cls, mock_hist_cls, mock_stage_cls)
             mock_proc = MagicMock()
@@ -45,6 +46,8 @@ class TestRunStage:
             mock_bus.publish = AsyncMock()
             mock_eb.return_value = mock_bus
             mock_doc_event = DocumentProcessingEvent(mock_bus)
+
+            service._write_intermediate_result = MagicMock(return_value="s3://result/parsed.json")
 
             result = await service._run_stage(
                 db=mock_db, doc_repo=mock_doc, hist_repo=mock_hist, stage_repo=mock_stage,
@@ -73,9 +76,9 @@ class TestRunStage:
         mock_db.commit = AsyncMock()
 
         with (
-            patch("knowlebase.admin.processing.service.DocumentRepository") as mock_doc_cls,
-            patch("knowlebase.admin.processing.service.ProcessingHistoryRepository") as mock_hist_cls,
-            patch("knowlebase.admin.processing.service.StageResultRepository") as mock_stage_cls,
+            patch("knowlebase.build.processing.service.DocumentRepository") as mock_doc_cls,
+            patch("knowlebase.build.processing.service.ProcessingHistoryRepository") as mock_hist_cls,
+            patch("knowlebase.build.processing.service.StageResultRepository") as mock_stage_cls,
         ):
             mock_doc, mock_hist, mock_stage = _make_mock_repos(mock_doc_cls, mock_hist_cls, mock_stage_cls)
             mock_hist.get_by_processing_id = AsyncMock(return_value=MagicMock())
@@ -104,12 +107,12 @@ class TestGetProcessingStatus:
 
     @pytest.fixture
     def service(self):
-        return ProcessingService()
+        return ProcessingQueryService()
 
     @pytest.mark.asyncio
     async def test_not_found(self, service):
         mock_db = AsyncMock()
-        with patch("knowlebase.admin.processing.service.ProcessingHistoryRepository") as mock_hist_cls:
+        with patch("knowlebase.build.query.service.ProcessingHistoryRepository") as mock_hist_cls:
             mock_hist_cls.return_value.get_by_processing_id = AsyncMock(return_value=None)
 
             result = await service.get_processing_status(mock_db, "proc_none")
@@ -136,8 +139,8 @@ class TestGetProcessingStatus:
         stage.error_message = None
 
         with (
-            patch("knowlebase.admin.processing.service.ProcessingHistoryRepository") as mock_hist_cls,
-            patch("knowlebase.admin.processing.service.StageResultRepository") as mock_stage_cls,
+            patch("knowlebase.build.query.service.ProcessingHistoryRepository") as mock_hist_cls,
+            patch("knowlebase.build.query.service.StageResultRepository") as mock_stage_cls,
         ):
             mock_hist_cls.return_value.get_by_processing_id = AsyncMock(return_value=proc)
             mock_stage_cls.return_value.list_by_processing_id = AsyncMock(return_value=[stage])
@@ -154,7 +157,7 @@ class TestGetProcessingView:
 
     @pytest.fixture
     def service(self):
-        return ProcessingService()
+        return ProcessingQueryService()
 
     @pytest.mark.asyncio
     async def test_view_with_pending_document(self, service):
@@ -164,9 +167,9 @@ class TestGetProcessingView:
         doc.original_filename = "pending.pdf"
 
         with (
-            patch("knowlebase.admin.processing.service.DocumentRepository") as mock_doc_cls,
-            patch("knowlebase.admin.processing.service.ProcessingHistoryRepository") as mock_hist_cls,
-            patch("knowlebase.admin.processing.service.StageResultRepository") as mock_stage_cls,
+            patch("knowlebase.build.query.service.DocumentRepository") as mock_doc_cls,
+            patch("knowlebase.build.query.service.ProcessingHistoryRepository") as mock_hist_cls,
+            patch("knowlebase.build.query.service.StageResultRepository") as mock_stage_cls,
         ):
             mock_doc, mock_hist, mock_stage = _make_mock_repos(mock_doc_cls, mock_hist_cls, mock_stage_cls)
 
@@ -203,9 +206,9 @@ class TestGetProcessingView:
         stage.status = "succeeded"
 
         with (
-            patch("knowlebase.admin.processing.service.DocumentRepository") as mock_doc_cls,
-            patch("knowlebase.admin.processing.service.ProcessingHistoryRepository") as mock_hist_cls,
-            patch("knowlebase.admin.processing.service.StageResultRepository") as mock_stage_cls,
+            patch("knowlebase.build.query.service.DocumentRepository") as mock_doc_cls,
+            patch("knowlebase.build.query.service.ProcessingHistoryRepository") as mock_hist_cls,
+            patch("knowlebase.build.query.service.StageResultRepository") as mock_stage_cls,
         ):
             mock_doc, mock_hist, mock_stage = _make_mock_repos(mock_doc_cls, mock_hist_cls, mock_stage_cls)
 
@@ -229,23 +232,23 @@ class TestGetProcessingView:
 class TestParsePageRange:
 
     def test_none_returns_zero_zero(self):
-        from knowlebase.admin.processing.service import ProcessingService
+        from knowlebase.build.processing.service import ProcessingService
         assert ProcessingService._parse_page_range(None) == (0, 0)
 
     def test_empty_returns_zero_zero(self):
-        from knowlebase.admin.processing.service import ProcessingService
+        from knowlebase.build.processing.service import ProcessingService
         assert ProcessingService._parse_page_range("") == (0, 0)
 
     def test_single_page(self):
-        from knowlebase.admin.processing.service import ProcessingService
+        from knowlebase.build.processing.service import ProcessingService
         assert ProcessingService._parse_page_range("5") == (5, 5)
 
     def test_page_range(self):
-        from knowlebase.admin.processing.service import ProcessingService
+        from knowlebase.build.processing.service import ProcessingService
         assert ProcessingService._parse_page_range("1-3") == (1, 3)
 
     def test_page_range_with_spaces(self):
-        from knowlebase.admin.processing.service import ProcessingService
+        from knowlebase.build.processing.service import ProcessingService
         assert ProcessingService._parse_page_range(" 10 - 20 ") == (10, 20)
 
 
@@ -254,7 +257,7 @@ class TestStoreResults:
 
     @pytest.fixture
     def service(self):
-        from knowlebase.admin.processing.service import ProcessingService
+        from knowlebase.build.processing.service import ProcessingService
         return ProcessingService()
 
     def _make_chunk(self, index=0):
@@ -290,11 +293,11 @@ class TestStoreResults:
         chunks = [self._make_chunk(i) for i in range(2)]
 
         with (
-            patch("knowlebase.admin.processing.service.get_embedding_service") as mock_emb,
-            patch("knowlebase.admin.processing.service.get_es_service") as mock_es,
-            patch("knowlebase.admin.processing.service.get_milvus_service") as mock_milvus,
-            patch("knowlebase.admin.processing.service.get_neo4j_service") as mock_neo4j,
-            patch("knowlebase.admin.processing.service.DocumentChunkRepository") as mock_chunk_repo_cls,
+            patch("knowlebase.build.processing.service.get_embedding_service") as mock_emb,
+            patch("knowlebase.build.processing.service.get_es_service") as mock_es,
+            patch("knowlebase.build.processing.service.get_milvus_service") as mock_milvus,
+            patch("knowlebase.build.processing.service.get_neo4j_service") as mock_neo4j,
+            patch("knowlebase.build.processing.service.DocumentChunkRepository") as mock_chunk_repo_cls,
         ):
             mock_emb_svc = MagicMock()
             mock_emb_svc.count_tokens = MagicMock(return_value=100)
@@ -364,11 +367,11 @@ class TestStoreResults:
         chunks = [self._make_chunk(0)]
 
         with (
-            patch("knowlebase.admin.processing.service.get_embedding_service") as mock_emb,
-            patch("knowlebase.admin.processing.service.get_es_service") as mock_es,
-            patch("knowlebase.admin.processing.service.get_milvus_service") as mock_milvus,
-            patch("knowlebase.admin.processing.service.get_neo4j_service") as mock_neo4j,
-            patch("knowlebase.admin.processing.service.DocumentChunkRepository") as mock_chunk_repo_cls,
+            patch("knowlebase.build.processing.service.get_embedding_service") as mock_emb,
+            patch("knowlebase.build.processing.service.get_es_service") as mock_es,
+            patch("knowlebase.build.processing.service.get_milvus_service") as mock_milvus,
+            patch("knowlebase.build.processing.service.get_neo4j_service") as mock_neo4j,
+            patch("knowlebase.build.processing.service.DocumentChunkRepository") as mock_chunk_repo_cls,
         ):
             mock_emb_svc = MagicMock()
             mock_emb_svc.count_tokens = MagicMock(return_value=50)
@@ -424,11 +427,11 @@ class TestStoreResults:
         chunks = [self._make_chunk(0)]
 
         with (
-            patch("knowlebase.admin.processing.service.get_embedding_service") as mock_emb,
-            patch("knowlebase.admin.processing.service.get_es_service") as mock_es,
-            patch("knowlebase.admin.processing.service.get_milvus_service") as mock_milvus,
-            patch("knowlebase.admin.processing.service.get_neo4j_service") as mock_neo4j,
-            patch("knowlebase.admin.processing.service.DocumentChunkRepository") as mock_chunk_repo_cls,
+            patch("knowlebase.build.processing.service.get_embedding_service") as mock_emb,
+            patch("knowlebase.build.processing.service.get_es_service") as mock_es,
+            patch("knowlebase.build.processing.service.get_milvus_service") as mock_milvus,
+            patch("knowlebase.build.processing.service.get_neo4j_service") as mock_neo4j,
+            patch("knowlebase.build.processing.service.DocumentChunkRepository") as mock_chunk_repo_cls,
         ):
             mock_emb_svc = MagicMock()
             mock_emb_svc.count_tokens = MagicMock(return_value=50)
@@ -484,11 +487,11 @@ class TestStoreResults:
         chunks = [self._make_chunk(0)]
 
         with (
-            patch("knowlebase.admin.processing.service.get_embedding_service") as mock_emb,
-            patch("knowlebase.admin.processing.service.get_es_service") as mock_es,
-            patch("knowlebase.admin.processing.service.get_milvus_service") as mock_milvus,
-            patch("knowlebase.admin.processing.service.get_neo4j_service") as mock_neo4j,
-            patch("knowlebase.admin.processing.service.DocumentChunkRepository") as mock_chunk_repo_cls,
+            patch("knowlebase.build.processing.service.get_embedding_service") as mock_emb,
+            patch("knowlebase.build.processing.service.get_es_service") as mock_es,
+            patch("knowlebase.build.processing.service.get_milvus_service") as mock_milvus,
+            patch("knowlebase.build.processing.service.get_neo4j_service") as mock_neo4j,
+            patch("knowlebase.build.processing.service.DocumentChunkRepository") as mock_chunk_repo_cls,
         ):
             mock_emb_svc = MagicMock()
             mock_emb_svc.count_tokens = MagicMock(return_value=50)
@@ -546,11 +549,11 @@ class TestStoreResults:
         chunks = [self._make_chunk(0)]
 
         with (
-            patch("knowlebase.admin.processing.service.get_embedding_service") as mock_emb,
-            patch("knowlebase.admin.processing.service.get_es_service") as mock_es,
-            patch("knowlebase.admin.processing.service.get_milvus_service") as mock_milvus,
-            patch("knowlebase.admin.processing.service.get_neo4j_service") as mock_neo4j,
-            patch("knowlebase.admin.processing.service.DocumentChunkRepository") as mock_chunk_repo_cls,
+            patch("knowlebase.build.processing.service.get_embedding_service") as mock_emb,
+            patch("knowlebase.build.processing.service.get_es_service") as mock_es,
+            patch("knowlebase.build.processing.service.get_milvus_service") as mock_milvus,
+            patch("knowlebase.build.processing.service.get_neo4j_service") as mock_neo4j,
+            patch("knowlebase.build.processing.service.DocumentChunkRepository") as mock_chunk_repo_cls,
         ):
             mock_emb_svc = MagicMock()
             mock_emb_svc.count_tokens = MagicMock(return_value=50)
