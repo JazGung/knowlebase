@@ -1,20 +1,20 @@
-- [ ] [来源：知识库管理 → 影响：文档管理-上传] (2026-05-11 23:00) 事项：building 锁期间禁止上传文档
+- [ ] [来源：业务资源域-版本管理 → 影响：业务资源域-文档管理-上传] (2026-05-11 23:00) 事项：building 锁期间禁止上传文档
   - [x] 修改 REQ (2026-05-11 23:15)
   - [x] 修改 DEG (2026-05-12)
   - [ ] 修改代码并测试
-- [ ] [来源：知识库管理 → 影响：文档管理-启用] (2026-05-11 23:00) 事项：building 锁期间禁止启用文档
+- [ ] [来源：业务资源域-版本管理 → 影响：业务资源域-文档管理-启用] (2026-05-11 23:00) 事项：building 锁期间禁止启用文档
   - [x] 修改 REQ (2026-05-11 23:15)
   - [x] 修改 DEG (2026-05-12)
   - [ ] 修改代码并测试
-- [ ] [来源：知识库管理 → 影响：文档管理-停用] (2026-05-11 23:00) 事项：building 锁期间禁止停用文档
+- [ ] [来源：业务资源域-版本管理 → 影响：业务资源域-文档管理-停用] (2026-05-11 23:00) 事项：building 锁期间禁止停用文档
   - [x] 修改 REQ (2026-05-11 23:15)
   - [x] 修改 DEG (2026-05-12)
   - [ ] 修改代码并测试
-- [ ] [来源：知识库管理 → 影响：文档管理-处理] (2026-05-11 23:00) 事项：building 锁期间禁止处理文档
+- [ ] [来源：业务资源域-版本管理 → 影响：业务资源域-文档管理-处理] (2026-05-11 23:00) 事项：building 锁期间禁止处理文档
   - [x] 修改 REQ (2026-05-11 23:15)
   - [x] 修改 DEG (2026-05-12)
   - [ ] 修改代码并测试
-- [ ] [来源：规则变更 → 影响：文档管理-DEG] (2026-05-11 23:10) 事项：REQ 命名调整波及 DEG — 处理过程→处理过程查询、处理历史→处理历史查询，界面名称和页面流转图同步更新
+- [ ] [来源：规则变更 → 影响：业务资源域-DEG] (2026-05-11 23:10) 事项：REQ 命名调整波及 DEG — 处理过程→处理过程查询、处理历史→处理历史查询，界面名称和页面流转图同步更新
   - [ ] 修改 DEG
   - [ ] 修改代码并测试
 - [x] [来源：文档管理-DEG → 影响：代码] (2026-05-12) 事项：删除 source_type 列 (2026-05-12 完成)
@@ -33,18 +33,18 @@
     - [x] 修改 DocumentVersionRelation 模型：添加 processing_histories 关系
     - [x] 修改处理流程：创建 processing_history 时写入 relation_id
     - [x] 修改查询逻辑：按 relation_id 查询处理历史
-- [ ] [来源：领域重构 → 影响：代码] (2026-05-12) 事项：新增"文档处理管理"领域模块，拆分文档管理、知识库管理的处理功能
+- [ ] [来源：领域重构 → 影响：代码] (2026-05-12) 事项：引入业务资源域与构建域两级领域结构
   - [x] 修改 OVERVIEW.md (2026-05-12)
-  - [x] 修改 文档管理 REQ (2026-05-12)
-  - [x] 修改 文档管理 DEG (2026-05-12)
-  - [x] 修改 知识库管理 DEG (2026-05-12)
-  - [x] 创建 文档处理管理 REQ (2026-05-12)
-  - [x] 创建 文档处理管理 DEG (2026-05-12)
+  - [x] 创建 业务资源域 REQ (2026-05-12)
+  - [x] 创建 构建域 REQ (2026-05-12)
+  - [x] 创建 业务资源域 DEG (2026-05-13)
+  - [x] 创建 构建域 DEG (2026-05-13)
   - [ ] 修改代码并测试
   - 子步骤：
-    - [ ] 新增 admin.processing 模块（API + service + domain + models）
-    - [ ] 迁移 DocumentVersionRelation、DocumentProcessingHistory、ProcessingStageResult 模型到 processing 模块
-    - [ ] 迁移处理流水线逻辑（check/parse/clean/images_describe/chunk/store）
-    - [ ] 迁移事件总线（ProcessingEventBus、ProcessingMonitor）
-    - [ ] 更新文档管理模块：移除处理相关代码，改为调用 processing 模块
-    - [ ] 更新知识库管理模块：DocumentVersionRelation 改为调用 processing 模块
+    - [ ] 重构 resource 模块（合并 document + version + relation，URL 前缀 /resource/）
+    - [ ] 新增 build 模块（迁移 processing 逻辑，URL 前缀 /build/）
+    - [ ] DocumentVersionRelation 保留在业务资源域（原计划迁移到 processing，已调整）
+    - [ ] 迁移 DocumentProcessingHistory、ProcessingStageResult 到 build
+    - [ ] 迁移处理流水线逻辑（check/parse/clean/images_describe/chunk/store）到 build
+    - [ ] 迁移事件总线（ProcessingEventBus、ProcessingMonitor）到 build
+    - [ ] 更新 URL 前缀：/build/document → /resource/document，/build/version → /resource/version

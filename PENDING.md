@@ -1,4 +1,4 @@
-- [ ] [来源：文档处理管理] (2026-05-12) 事项：`POST /build/document/process` 归属问题。决策：保留在文档管理模块，移除 DEG 中 `POST /build/processing/start`，将 REQ #4 的全部流程（含构建锁检查、处理中检查、同步建 history）补齐到 `/document/process`。暂不考虑原因：待其余审计项确认后一并修改 → 影响：文档管理-处理、文档处理管理-DEG
-- [x] [来源：文档处理管理] (2026-05-12) 事项：`GET /build/processing/relation/list` 和 `GET /build/processing/history/list` 已作为独立 API 实现，DEG stream 端点已补充 (2026-05-12 完成)
-- [ ] [来源：知识库管理 → 影响：文档管理-上传/启用/停用/处理] (2026-05-12) 事项：building 锁期间禁止上传/启用/停用/处理文档。REQ ✅、DEG ✅，代码待实现 → 影响：文档管理、知识库管理、文档处理管理
-- [ ] [来源：领域重构 → 影响：代码] (2026-05-12) 事项：文档处理管理模块代码拆分（模型/API/服务/事件总线迁移）。决策：要拆分，后续启动 → 影响：文档管理、知识库管理、文档处理管理
+- [ ] [来源：构建域] (2026-05-12) 事项：`POST /resource/document/process` 归属问题。决策：保留在业务资源域-文档管理，构建域新增 `POST /build/processing/start` 作为内部调用入口，将 REQ #3 的全部流程（含处理中检查、同步建 history）补齐到 `/build/processing/start`。暂不考虑原因：待其余审计项确认后一并修改 → 影响：业务资源域-文档管理-处理、构建域-DEG
+- [x] [来源：构建域] (2026-05-12) 事项：`GET /build/processing/relation/list` 和 `GET /build/processing/history/list` 已作为独立 API 实现，DEG stream 端点已补充 (2026-05-12 完成)
+- [ ] [来源：业务资源域-版本管理 → 影响：业务资源域-文档管理-上传/启用/停用/处理] (2026-05-12) 事项：building 锁期间禁止上传/启用/停用/处理文档。REQ ✅、DEG ✅，代码待实现 → 影响：业务资源域、构建域
+- [ ] [来源：领域重构 → 影响：代码] (2026-05-12) 事项：业务资源域与构建域模块代码调整（admin.resource.* + admin.build.*，URL 前缀同步）。决策：后续启动 → 影响：业务资源域、构建域
