@@ -2,8 +2,9 @@
 # 中间件服务配置
 # ============================================================
 # 数据持久化策略：
-# - 默认使用 bind mount 映射到 ../knowlebase-volume 目录
+# - 默认使用 bind mount 映射到 E:/project/knowlebase-volume 目录
 # - 自定义: 在 .env 中修改 VOLUME_BASE 变量
+# - 子目录以中间件名称命名（postgres、elasticsearch 等）
 # - Neo4j 使用 Docker named volume（Windows 下 bind mount 会触发
 #   chown -R 导致启动卡死，这是 Docker Desktop 的已知限制）
 # ============================================================
@@ -19,7 +20,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-knowlebase}
       TZ: Asia/Shanghai
     volumes:
-      - ${VOLUME_BASE:-../knowlebase-volume}/postgres_data:/var/lib/postgresql/data
+      - ${VOLUME_BASE:-E:/project/knowlebase-volume}/postgres:/var/lib/postgresql/data
     ports:
       - "5432:5432"
     healthcheck:
@@ -41,7 +42,7 @@ services:
       - cluster.name=knowlebase-cluster
       - TZ=Asia/Shanghai
     volumes:
-      - ${VOLUME_BASE:-../knowlebase-volume}/elasticsearch_data:/usr/share/elasticsearch/data
+      - ${VOLUME_BASE:-E:/project/knowlebase-volume}/elasticsearch:/usr/share/elasticsearch/data
       - ./config/elasticsearch/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml
       - ./config/elasticsearch/plugins:/usr/share/elasticsearch/plugins
     ports:
@@ -65,7 +66,7 @@ services:
       - MINIO_ADDRESS=minio:9000
       - TZ=Asia/Shanghai
     volumes:
-      - ${VOLUME_BASE:-../knowlebase-volume}/milvus_data:/var/lib/milvus
+      - ${VOLUME_BASE:-E:/project/knowlebase-volume}/milvus:/var/lib/milvus
     ports:
       - "19530:19530"
       - "9091:9091"
@@ -91,7 +92,7 @@ services:
       - ETCD_SNAPSHOT_COUNT=50000
       - TZ=Asia/Shanghai
     volumes:
-      - ${VOLUME_BASE:-../knowlebase-volume}/etcd_data:/etcd
+      - ${VOLUME_BASE:-E:/project/knowlebase-volume}/etcd:/etcd
     command: etcd -advertise-client-urls=http://etcd:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
     networks:
       - knowlebase-network
@@ -107,7 +108,7 @@ services:
       - MINIO_ROOT_PASSWORD=minioadmin
       - TZ=Asia/Shanghai
     volumes:
-      - ${VOLUME_BASE:-../knowlebase-volume}/minio_data:/data
+      - ${VOLUME_BASE:-E:/project/knowlebase-volume}/minio:/data
     command: minio server /data --console-address ":9090"
     ports:
       - "9000:9000"
