@@ -48,3 +48,14 @@
     - [ ] 迁移处理流水线逻辑（check/parse/clean/images_describe/chunk/store）到 build
     - [ ] 迁移事件总线（ProcessingEventBus、ProcessingMonitor）到 build
     - [ ] 更新 URL 前缀：/build/document → /resource/document，/build/version → /resource/version
+- [ ] [来源：模型域 → 影响：构建域-文档处理] (2026-05-15) 事项：解析阶段由直接调用本地库改为通过 Higress 调用 /model/parsing，嵌入阶段改为通过 Higress 调用 /model/embedding
+  - [x] 修改 REQ (2026-05-15)
+  - [x] 修改 DEG (2026-05-15)
+  - [ ] 修改代码并测试
+  - 子步骤：
+    - [ ] 构建域 DEG：解析阶段流程改为 Higress HTTP 调用
+    - [ ] 构建域 DEG：数据入库阶段嵌入步骤改为 Higress HTTP 调用
+    - [ ] config.py：删除六元组，改为 LLM_API_BASE + 逻辑名常量
+    - [ ] processing/service.py：_parse_document 改为 HTTP 调用
+    - [ ] services/embedding_service.py：改为 HTTP 调用
+    - [ ] 新增 model 模块：/model/parsing、/model/embedding 端点

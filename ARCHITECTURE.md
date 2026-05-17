@@ -10,6 +10,9 @@ actor "用户" as user
 rectangle "前端 (Vue 3 + Element Plus)" as frontend
 rectangle "FastAPI 后端 (Uvicorn)" as backend
 rectangle "asyncio 后台任务" as queue
+rectangle "Higress\n(AI 网关)" as higress
+rectangle "模型域\n(/model)" as model
+cloud "在线 LLM\nProvider" as llm
 database "PostgreSQL\n(元数据)" as pg
 database "Elasticsearch\n(关键词索引)" as es
 database "Milvus\n(向量索引)" as milvus
@@ -27,6 +30,9 @@ backend --> minio : 读取源文件
 backend --> es : 写入关键词索引
 backend --> milvus : 写入向量
 backend --> neo4j : 写入图谱
+backend --> higress : OpenAI API
+higress --> model : 逻辑名路由
+higress --> llm : 逻辑名路由
 
 note right of frontend
   端口: 5173
@@ -62,6 +68,7 @@ end note
 | :--- | :--- | :--- | :--- | :--- |
 | 前端 | Node 22 (开发) / Nginx (生产) | 5173 / 80 | 1 | Vue 3 SPA，开发模式Vite HMR |
 | 后端 | Python 3.12 (Uvicorn) | 8000 | 1 (开发) | FastAPI应用，支持开发模式热重载 |
+| 模型域 | Python 3.12 (Uvicorn) | — | 1 | 与后端同进程，/model 端点，封装本地模型推理 |
 
 ## 4. 中间件
 
@@ -72,6 +79,7 @@ end note
 | Milvus | milvusdb/milvus:v2.4.0 | 19530, 9091 | 向量数据库，存储文档chunk的向量嵌入，支持语义搜索 |
 | Neo4j | neo4j:5.15.0 | 7474, 7687 | 图数据库，存储实体关系三元组，支持图谱检索 |
 | MinIO | minio/minio:latest | 9000, 9090 | S3兼容对象存储，存储原始文档文件和提取的图片 |
+| Higress | higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/higress:latest | 8080, 8443 | AI 网关，统一 LLM 路由，模型与提供商解耦 |
 | etcd | quay.io/coreos/etcd:v3.5.5 | 2379 | Milvus元数据存储依赖 |
 
 ## 5. 数据库与存储职责
@@ -91,7 +99,7 @@ end note
 | 文件 | 说明 |
 | :--- | :--- |
 | `docker-compose.yml` | 主配置文件，通过`include`指令集成中间件和应用配置 |
-| `docker-compose-midware.yml` | 定义所有中间件服务（PostgreSQL, Elasticsearch, Milvus, Neo4j, MinIO, etcd） |
+| `docker-compose-midware.yml` | 定义所有中间件服务（PostgreSQL, Elasticsearch, Milvus, Neo4j, MinIO, Higress, etcd） |
 | `docker-compose-app.yml` | 定义应用服务（backend, frontend） |
 
 ### 6.2 启动方式
@@ -122,17 +130,24 @@ docker-compose -f docker-compose-app.yml up -d
 | PDF解析（pdfplumber） | PyPDF2 | pdfplumber支持文本位置、表格、图片提取，精度更高 |
 | 实时推送（SSE） | WebSocket | SSE更简单，单向推送场景足够，浏览器原生支持重连 |
 
-## 8. LLM 默认模型配置
+## 8. AI 网关与模型路由
 
-系统级默认模型，各功能模块未配置独立模型时回退使用。
+系统通过 Higress AI 网关统一路由所有模型请求（嵌入、解析、分块、图片描述）。应用代码以逻辑名标识调用目标，Higress 根据逻辑名路由到本地模型域或在线提供商。
 
 | 配置项 | 类型 | 默认值 | 说明 |
 | :--- | :--- | :--- | :--- |
-| `default_llm_model` | str | `gpt-4o-mini` | 模型名称 |
-| `default_llm_model_provider` | str | — | 模型供应商 |
-| `default_llm_api_key` | str | — | API 密钥 |
-| `default_llm_api_base` | str | — | API 地址（可选，自定义/私有部署时填写） |
-| `default_llm_temperature` | float | — | 温度参数 |
+| `LLM_API_BASE` | str | `http://higress:8080/v1` | Higress 网关地址（OpenAI 兼容端点） |
+
+应用使用的逻辑名（代码常量）：
+
+| 逻辑名 | 用途 | 路由目标 |
+| :--- | :--- | :--- |
+| `parsing` | 文档解析 | /model/parsing（本地 pdfplumber/docx） |
+| `embedding` | 文本向量化 | /model/embedding（本地 sentence-transformers） |
+| `chunking` | 文档分块 | 在线 LLM |
+| `image-desc` | 图片描述 | 在线视觉模型 |
+
+provider、api_key、temperature 等细节由 Higress 侧管理，应用不感知。
 
 ## 9. 开发环境要求
 
