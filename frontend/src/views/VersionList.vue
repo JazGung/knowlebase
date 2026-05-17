@@ -149,7 +149,6 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Check, Close, Delete, View } from '@element-plus/icons-vue'
 import {
   getVersionList,
-  getVersionDetail,
   createVersion,
   enableVersion,
   buildVersion,
@@ -289,19 +288,16 @@ async function handleDelete() {
   }
 }
 
-// 查看详情
-async function handleViewDetail(versionId) {
-  if (!versionId) return
-  try {
-    detailData.value = await getVersionDetail(versionId)
-    detailVisible.value = true
-  } catch (err) {
-    ElMessage.error(`加载版本详情失败: ${err.message}`)
-  }
+// 查看详情（列表数据已包含全部字段，直接展示）
+function handleViewDetail(row) {
+  if (!row) return
+  const v = versions.value.find(item => item.version_id === row.version_id)
+  detailData.value = { version: v }
+  detailVisible.value = true
 }
 
 function handleRowDblClick(row) {
-  handleViewDetail(row.version_id)
+  handleViewDetail(row)
 }
 
 // 工具函数

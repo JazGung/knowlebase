@@ -17,6 +17,10 @@ export default defineConfig({
       '/resource': {
         target: 'http://localhost:8000',
         changeOrigin: true
+      },
+      '/model': {
+        target: 'http://localhost:8000',
+        changeOrigin: true
       }
     }
   }
