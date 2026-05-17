@@ -2,11 +2,10 @@
 # 中间件服务配置
 # ============================================================
 # 数据持久化策略：
-# - 默认使用 bind mount 映射到 E:/project/knowlebase-volume 目录
-# - 自定义: 在 .env 中修改 VOLUME_BASE 变量
-# - 子目录以中间件名称命名（postgres、elasticsearch 等）
-# - Neo4j 使用 Docker named volume（Windows 下 bind mount 会触发
-#   chown -R 导致启动卡死，这是 Docker Desktop 的已知限制）
+# - 数据存储在 WSL2 DockerData distro 的 ext4 文件系统
+# - 根路径通过 .env 的 VOLUME_BASE 配置
+# - Windows 端通过 \\wsl.localhost\DockerData\home\knowlebase\ 访问
+# - ext4 下 chown 原生速度，无需 named volume
 # ============================================================
 
 services:
@@ -20,7 +19,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-knowlebase}
       TZ: Asia/Shanghai
     volumes:
-      - ${VOLUME_BASE:-E:/project/knowlebase-volume}/postgres:/var/lib/postgresql/data
+      - ${VOLUME_BASE}/postgres:/var/lib/postgresql/data
     ports:
       - "5432:5432"
     healthcheck:
@@ -42,7 +41,7 @@ services:
       - cluster.name=knowlebase-cluster
       - TZ=Asia/Shanghai
     volumes:
-      - ${VOLUME_BASE:-E:/project/knowlebase-volume}/elasticsearch:/usr/share/elasticsearch/data
+      - ${VOLUME_BASE}/elasticsearch:/usr/share/elasticsearch/data
       - ./config/elasticsearch/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml
       - ./config/elasticsearch/plugins:/usr/share/elasticsearch/plugins
     ports:
@@ -66,7 +65,7 @@ services:
       - MINIO_ADDRESS=minio:9000
       - TZ=Asia/Shanghai
     volumes:
-      - ${VOLUME_BASE:-E:/project/knowlebase-volume}/milvus:/var/lib/milvus
+      - ${VOLUME_BASE}/milvus:/var/lib/milvus
     ports:
       - "19530:19530"
       - "9091:9091"
@@ -92,7 +91,7 @@ services:
       - ETCD_SNAPSHOT_COUNT=50000
       - TZ=Asia/Shanghai
     volumes:
-      - ${VOLUME_BASE:-E:/project/knowlebase-volume}/etcd:/etcd
+      - ${VOLUME_BASE}/etcd:/etcd
     command: etcd -advertise-client-urls=http://etcd:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
     networks:
       - knowlebase-network
@@ -108,7 +107,7 @@ services:
       - MINIO_ROOT_PASSWORD=minioadmin
       - TZ=Asia/Shanghai
     volumes:
-      - ${VOLUME_BASE:-E:/project/knowlebase-volume}/minio:/data
+      - ${VOLUME_BASE}/minio:/data
     command: minio server /data --console-address ":9090"
     ports:
       - "9000:9000"
@@ -122,20 +121,23 @@ services:
       - knowlebase-network
 
   # 图数据库：知识图谱、实体关系存储
-  # 注意：Windows 下必须使用 named volume，因为 Neo4j 入口脚本会
-  # 执行 chown -R neo4j:neo4j /var/lib/neo4j，对 bind mount 极其缓慢
   neo4j:
     image: neo4j:5.14.0
     container_name: knowlebase-neo4j
+    # EXTENSION_SCRIPT 钩子：entrypoint 完成所有初始化后、neo4j console 启动前执行。
+    # set_initial_password 会创建 store_lock，必须在此之后清理，否则误判 "already running"
     environment:
       - NEO4J_AUTH=${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-knowlebase_password}
-      - NEO4J_PLUGINS=["apoc", "graph-data-science"]
+      - NEO4J_PLUGINS=["apoc"]
       - NEO4J_ACCEPT_LICENSE_AGREEMENT=yes
+      - EXTENSION_SCRIPT=/config/extension.sh
+      - NEO4J_dbms_security_procedures_unrestricted=apoc.*,gds.*
       - TZ=Asia/Shanghai
     volumes:
-      # 使用 Docker named volume（内部 Linux 文件系统，chown 瞬间完成）
-      - neo4j_data:/data
-      # logs、import、plugins 不做持久化，容器重启时插件会自动重新下载
+      # WSL ext4 bind mount，chown 原生速度，不再需要 named volume
+      - ${VOLUME_BASE}/neo4j/data:/data
+      - ./config/neo4j/extension.sh:/config/extension.sh:ro
+      - ${VOLUME_BASE}/neo4j/plugins:/plugins
     ports:
       - "7474:7474"
       - "7687:7687"
@@ -149,9 +151,21 @@ services:
     networks:
       - knowlebase-network
 
-volumes:
-  neo4j_data:
-    driver: local
+  # AI 网关：统一 LLM 路由，模型与提供商解耦
+  # 使用 all-in-one 镜像（自包含，无需 K8s），与 higress/higress（K8s 依赖）不同
+  higress:
+    image: higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/all-in-one:latest
+    container_name: knowlebase-higress
+    environment:
+      - TZ=Asia/Shanghai
+    volumes:
+      - ${VOLUME_BASE}/higress:/data
+    ports:
+      - "8080:8080"
+      - "8443:8443"
+      - "8001:8001"
+    networks:
+      - knowlebase-network
 
 networks:
   knowlebase-network:

@@ -23,6 +23,12 @@ from knowlebase.schemas.document import (
     BatchResult,
     BatchResponse,
 )
+from knowlebase.schemas.model import (
+    ParseRequest,
+    ParseResponse,
+    EmbeddingRequest,
+    EmbeddingResponse,
+)
 
 __all__ = [
     "DocumentStatus",
@@ -44,4 +50,8 @@ __all__ = [
     "BaseResponse",
     "BatchResult",
     "BatchResponse",
+    "ParseRequest",
+    "ParseResponse",
+    "EmbeddingRequest",
+    "EmbeddingResponse",
 ]
