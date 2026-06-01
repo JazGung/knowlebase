@@ -1,0 +1,61 @@
+- [ ] [来源：业务资源域-版本管理 → 影响：业务资源域-文档管理-上传] (2026-05-11 23:00) 事项：building 锁期间禁止上传文档
+  - [x] 修改 REQ (2026-05-11 23:15)
+  - [x] 修改 DEG (2026-05-12)
+  - [ ] 修改代码并测试
+- [ ] [来源：业务资源域-版本管理 → 影响：业务资源域-文档管理-启用] (2026-05-11 23:00) 事项：building 锁期间禁止启用文档
+  - [x] 修改 REQ (2026-05-11 23:15)
+  - [x] 修改 DEG (2026-05-12)
+  - [ ] 修改代码并测试
+- [ ] [来源：业务资源域-版本管理 → 影响：业务资源域-文档管理-停用] (2026-05-11 23:00) 事项：building 锁期间禁止停用文档
+  - [x] 修改 REQ (2026-05-11 23:15)
+  - [x] 修改 DEG (2026-05-12)
+  - [ ] 修改代码并测试
+- [ ] [来源：业务资源域-版本管理 → 影响：业务资源域-文档管理-处理] (2026-05-11 23:00) 事项：building 锁期间禁止处理文档
+  - [x] 修改 REQ (2026-05-11 23:15)
+  - [x] 修改 DEG (2026-05-12)
+  - [ ] 修改代码并测试
+- [ ] [来源：规则变更 → 影响：业务资源域-DEG] (2026-05-11 23:10) 事项：REQ 命名调整波及 DEG — 处理过程→处理过程查询、处理历史→处理历史查询，界面名称和页面流转图同步更新
+  - [ ] 修改 DEG
+  - [ ] 修改代码并测试
+- [x] [来源：文档管理-DEG → 影响：代码] (2026-05-12) 事项：删除 source_type 列 (2026-05-12 完成)
+  - [x] 修改 DEG (2026-05-12)
+  - [x] 修改代码并测试
+- [x] [来源：文档管理-DEG → 影响：代码] (2026-05-12) 事项：rebuild_id 重命名为 build_id（重建→构建术语统一） (2026-05-12 完成)
+  - [x] 修改 DEG (2026-05-12)
+  - [x] 修改代码并测试
+- [x] [来源：文档管理-DEG + 知识库管理-DEG → 影响：代码] (2026-05-12) 事项：document_processing_history 的 document_id → relation_id，关联 document_version_relation 而非 document (2026-05-12 完成)
+  - [x] 修改 文档管理 DEG (2026-05-12)
+  - [x] 修改 知识库管理 DEG (2026-05-12)
+  - [x] 修改代码并测试
+  - 子步骤：
+    - [x] 修改 document_processing_history 模型：document_id → relation_id，FK 指向 document_version_relation.id
+    - [x] 修改 Document 模型：移除 histories 直接关联，改为通过 relations
+    - [x] 修改 DocumentVersionRelation 模型：添加 processing_histories 关系
+    - [x] 修改处理流程：创建 processing_history 时写入 relation_id
+    - [x] 修改查询逻辑：按 relation_id 查询处理历史
+- [ ] [来源：领域重构 → 影响：代码] (2026-05-12) 事项：引入业务资源域与构建域两级领域结构
+  - [x] 修改 OVERVIEW.md (2026-05-12)
+  - [x] 创建 业务资源域 REQ (2026-05-12)
+  - [x] 创建 构建域 REQ (2026-05-12)
+  - [x] 创建 业务资源域 DEG (2026-05-13)
+  - [x] 创建 构建域 DEG (2026-05-13)
+  - [ ] 修改代码并测试
+  - 子步骤：
+    - [ ] 重构 resource 模块（合并 document + version + relation，URL 前缀 /resource/）
+    - [ ] 新增 build 模块（迁移 processing 逻辑，URL 前缀 /build/）
+    - [ ] DocumentVersionRelation 保留在业务资源域（原计划迁移到 processing，已调整）
+    - [ ] 迁移 DocumentProcessingHistory、ProcessingStageResult 到 build
+    - [ ] 迁移处理流水线逻辑（check/parse/clean/images_describe/chunk/store）到 build
+    - [ ] 迁移事件总线（ProcessingEventBus、ProcessingMonitor）到 build
+    - [ ] 更新 URL 前缀：/build/document → /resource/document，/build/version → /resource/version
+- [ ] [来源：模型域 → 影响：构建域-文档处理] (2026-05-15) 事项：解析阶段由直接调用本地库改为通过 Higress 调用 /model/parsing，嵌入阶段改为通过 Higress 调用 /model/embedding
+  - [x] 修改 REQ (2026-05-15)
+  - [x] 修改 DEG (2026-05-15)
+  - [ ] 修改代码并测试
+  - 子步骤：
+    - [ ] 构建域 DEG：解析阶段流程改为 Higress HTTP 调用
+    - [ ] 构建域 DEG：数据入库阶段嵌入步骤改为 Higress HTTP 调用
+    - [ ] config.py：删除六元组，改为 LLM_API_BASE + 逻辑名常量
+    - [ ] processing/service.py：_parse_document 改为 HTTP 调用
+    - [ ] services/embedding_service.py：改为 HTTP 调用
+    - [ ] 新增 model 模块：/model/parsing、/model/embedding 端点
