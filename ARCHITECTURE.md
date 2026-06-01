@@ -87,10 +87,15 @@ end note
 | 存储 | 职责 |
 | :--- | :--- |
 | PostgreSQL | 文档元数据（标题、文件名、哈希、状态）、处理历史记录、知识库版本信息、文档-版本关联关系、用户信息、搜索历史、文档清理日志、系统配置 |
-| Elasticsearch | 文档分块的文本内容索引（全文关键词搜索） |
-| Milvus | 文档分块的向量嵌入（语义相似性检索） |
-| Neo4j | 实体-关系-实体三元组（知识图谱查询） |
+| Elasticsearch | 构建域写入文档分块文本索引；检索域读取执行全文关键词搜索 |
+| Milvus | 构建域写入文档分块向量嵌入；检索域读取执行语义相似性检索 |
+| Neo4j | 构建域写入实体-关系-实体三元组；检索域读取执行知识图谱查询 |
 | MinIO | 原始文档文件（按MD5哈希命名）、文档提取的图片 |
+
+### 5.1 数据流向
+
+- **构建域（写入）**：文档处理流水线完成后，将数据写入 ES / Milvus / Neo4j，以 chunk_id 为关联键汇聚到 PostgreSQL `document_chunk.processed_text`
+- **检索域（读取）**：通过 `/retrieval`（API）和 `/retrieval/debug`（调试页）两种入口查询知识库，多路召回后经合并策略（RRF / 归一化加权）和重排序返回结果
 
 ## 6. Docker 集成
 
@@ -132,7 +137,7 @@ docker-compose -f docker-compose-app.yml up -d
 
 ## 8. AI 网关与模型路由
 
-系统通过 Higress AI 网关统一路由所有模型请求（嵌入、解析、分块、图片描述）。应用代码以逻辑名标识调用目标，Higress 根据逻辑名路由到本地模型域或在线提供商。
+系统通过 Higress AI 网关统一路由所有模型请求（嵌入、解析、分块、图片描述、实体抽取、重排序）。应用代码以逻辑名标识调用目标，Higress 根据逻辑名路由到本地模型域或在线提供商。
 
 | 配置项 | 类型 | 默认值 | 说明 |
 | :--- | :--- | :--- | :--- |
@@ -146,6 +151,7 @@ docker-compose -f docker-compose-app.yml up -d
 | `embedding` | 文本向量化 | /model/embedding（本地 sentence-transformers） |
 | `chunking` | 文档分块 | 在线 LLM |
 | `image-desc` | 图片描述 | 在线视觉模型 |
+| `entity-extract` | 实体抽取 | 在线 LLM |
 
 provider、api_key、temperature 等细节由 Higress 侧管理，应用不感知。
 
