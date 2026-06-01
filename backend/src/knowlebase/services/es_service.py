@@ -24,6 +24,9 @@ ES_INDEX_MAPPING = {
         "properties": {
             "chunk_id": {"type": "keyword"},
             "document_id": {"type": "keyword"},
+            "version_id": {"type": "keyword"},
+            "stored": {"type": "boolean"},
+            "enabled": {"type": "boolean"},
             "keyword": {"type": "text", "analyzer": "standard"},
         }
     },
@@ -61,7 +64,8 @@ class ElasticsearchService:
         """批量写入分块到 ES（bulk）
 
         Args:
-            chunks: [{"chunk_id": str, "document_id": str, "processed_text": str}, ...]
+            chunks: [{"chunk_id": str, "document_id": str, "version_id": str,
+                       "stored": bool, "enabled": bool, "processed_text": str}, ...]
         """
         if not chunks:
             return
@@ -69,7 +73,14 @@ class ElasticsearchService:
         body = []
         for c in chunks:
             body.append({"index": {"_index": ES_INDEX_NAME, "_id": c["chunk_id"]}})
-            body.append({"chunk_id": c["chunk_id"], "document_id": c["document_id"], "keyword": c["processed_text"]})
+            body.append({
+                "chunk_id": c["chunk_id"],
+                "document_id": c["document_id"],
+                "version_id": str(c.get("version_id", "")),
+                "stored": c.get("stored", True),
+                "enabled": c.get("enabled", True),
+                "keyword": c["processed_text"],
+            })
         resp = await self.client.bulk(body=body, refresh=True)
         if resp.get("errors"):
             error_items = [item for item in resp.get("items", []) if "error" in item.get("index", {})]
@@ -87,6 +98,40 @@ class ElasticsearchService:
             )
         except Exception as e:
             logger.warning(f"ES 按文档删除时出错（可能索引不存在）: {e}")
+
+    async def search(
+        self, query: str, size: int = 20,
+        version_id: str | None = None,
+    ) -> list[dict]:
+        """全文检索，返回 [(chunk_id, score), ...]
+
+        Args:
+            query: 检索关键词
+            size: 返回条数上限
+            version_id: 版本 ID 过滤（可选）
+        """
+        await self.ensure_index()
+        must = [{"match": {"keyword": query}}]
+        filter_clauses = [{"term": {"stored": True}}, {"term": {"enabled": True}}]
+        if version_id:
+            filter_clauses.append({"term": {"version_id": str(version_id)}})
+        resp = await self.client.search(
+            index=ES_INDEX_NAME,
+            body={
+                "query": {
+                    "bool": {
+                        "must": must,
+                        "filter": filter_clauses,
+                    }
+                },
+                "size": size,
+            },
+        )
+        hits = resp.get("hits", {}).get("hits", [])
+        return [
+            {"chunk_id": h["_source"]["chunk_id"], "score": h["_score"]}
+            for h in hits
+        ]
 
     async def close(self) -> None:
         if self._client is not None:

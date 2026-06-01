@@ -113,6 +113,7 @@ class TestKnowledgeBaseVersion:
     def test_to_dict_returns_all_fields(self):
         v = KnowledgeBaseVersion(
             version_name="v20260422_103000",
+            version_code=1717384500000,
             status="init",
             document_count=0,
             chunk_count=0,
@@ -120,6 +121,7 @@ class TestKnowledgeBaseVersion:
         )
         d = v.to_dict()
         assert d["version_name"] == "v20260422_103000"
+        assert d["version_code"] == 1717384500000
         assert d["status"] == "init"
         assert d["document_count"] == 0
         assert d["chunk_count"] == 0

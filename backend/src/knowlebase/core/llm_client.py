@@ -10,6 +10,7 @@ from knowlebase.core.config import settings
 # Higress 场景常量
 SCENE_CHUNKING = "chunking"
 SCENE_IMAGE_DESC = "image-desc"
+SCENE_ENTITY_EXTRACT = "entity-extract"
 
 
 def create_chat_model(scene: str, temperature: float = 0):

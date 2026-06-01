@@ -21,6 +21,7 @@ from knowlebase.services.minio_service import init_minio
 from knowlebase.resource import resource_router
 from knowlebase.build import build_router
 from knowlebase.model import model_router
+from knowlebase.retrieve import retrieve_router
 
 # 配置日志
 logging.basicConfig(
@@ -59,6 +60,15 @@ async def lifespan(app: FastAPI):
     async with session_manager.engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     logger.info("数据库表创建完成")
+
+    # 检索配置启动校验
+    logger.info("校验检索配置...")
+    try:
+        settings.validate_search_config()
+        logger.info("检索配置校验通过")
+    except ValueError as e:
+        logger.error(f"检索配置校验失败: {e}")
+        raise
 
     yield
 
@@ -142,6 +152,9 @@ def create_app() -> FastAPI:
 
     # 注册模型域路由
     app.include_router(model_router, prefix="/model")
+
+    # 注册检索域路由
+    app.include_router(retrieve_router, prefix="/retrieval")
 
     logger.info("FastAPI应用创建完成")
     return app

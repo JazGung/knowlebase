@@ -125,6 +125,10 @@ class Settings(BaseSettings):
     search_semantic_weight: float = Field(default=0.4, env="SEARCH_SEMANTIC_WEIGHT")
     search_graph_weight: float = Field(default=0.2, env="SEARCH_GRAPH_WEIGHT")
     search_results_limit: int = Field(default=20, env="SEARCH_RESULTS_LIMIT")
+    search_recall_ratio: float = Field(default=3.0, env="SEARCH_RECALL_RATIO")
+    search_merge_ratio: float = Field(default=2.0, env="SEARCH_MERGE_RATIO")
+    search_merge_strategy: str = Field(default="rrf", env="SEARCH_MERGE_STRATEGY")
+    search_rerank_strategy: str = Field(default="cross_encoder", env="SEARCH_RERANK_STRATEGY")
 
     # 开发环境标志
     development_mode: bool = Field(default=False, env="DEVELOPMENT_MODE")
@@ -159,6 +163,30 @@ class Settings(BaseSettings):
 
         # 支持 .env 文件中的嵌套配置
         env_nested_delimiter = "__"
+
+    def validate_search_config(self) -> None:
+        """检索配置启动校验，不满足则抛出 ValueError"""
+        weights = [
+            self.search_keyword_weight,
+            self.search_semantic_weight,
+            self.search_graph_weight,
+        ]
+        for i, w in enumerate(weights):
+            if w < 0:
+                names = ["SEARCH_KEYWORD_WEIGHT", "SEARCH_SEMANTIC_WEIGHT", "SEARCH_GRAPH_WEIGHT"]
+                raise ValueError(f"检索权重配置含负值: {names[i]}={w}")
+        if sum(weights) == 0:
+            raise ValueError("检索权重配置全部为 0 (SEARCH_KEYWORD_WEIGHT / SEARCH_SEMANTIC_WEIGHT / SEARCH_GRAPH_WEIGHT)，至少保留一路")
+        if self.search_recall_ratio < 1.0:
+            raise ValueError(f"SEARCH_RECALL_RATIO 须 >= 1.0，当前值: {self.search_recall_ratio}")
+        if self.search_merge_ratio < 1.0:
+            raise ValueError(f"SEARCH_MERGE_RATIO 须 >= 1.0，当前值: {self.search_merge_ratio}")
+        valid_merge = {"rrf", "weighted_normalization"}
+        if self.search_merge_strategy not in valid_merge:
+            raise ValueError(f"SEARCH_MERGE_STRATEGY 无效: {self.search_merge_strategy}，可选: {valid_merge}")
+        valid_rerank = {"cross_encoder", "llm", "none"}
+        if self.search_rerank_strategy not in valid_rerank:
+            raise ValueError(f"SEARCH_RERANK_STRATEGY 无效: {self.search_rerank_strategy}，可选: {valid_rerank}")
 
     def is_local_development(self) -> bool:
         """判断是否为本地开发环境"""

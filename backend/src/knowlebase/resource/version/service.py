@@ -35,7 +35,7 @@ class VersionService:
         if status_filter:
             query = query.where(KnowledgeBaseVersion.status == status_filter.value)
             count_query = count_query.where(KnowledgeBaseVersion.status == status_filter.value)
-        query = query.order_by(KnowledgeBaseVersion.version_name.desc())
+        query = query.order_by(KnowledgeBaseVersion.version_code.desc())
 
         total_result = await db.execute(count_query)
         total = total_result.scalar() or 0
@@ -78,6 +78,7 @@ class VersionService:
 
         version = KnowledgeBaseVersion(
             version_name=version_name,
+            version_code=int(now.timestamp() * 1000),
             status="init",
             created_by=created_by,
             started_at=now,
@@ -150,6 +151,7 @@ class VersionService:
         version_name = f"v{now.strftime('%Y%m%d_%H%M%S')}"
         version = KnowledgeBaseVersion(
             version_name=version_name,
+            version_code=int(now.timestamp() * 1000),
             status="succeeded",
             created_by="system",
             started_at=now,

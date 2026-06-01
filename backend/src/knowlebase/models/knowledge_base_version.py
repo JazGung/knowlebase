@@ -11,9 +11,10 @@ from sqlalchemy import (
     Column,
     String,
     Integer,
-    Integer,
+    BigInteger,
     Text,
     TIMESTAMP,
+    UniqueConstraint,
     Index,
 )
 from sqlalchemy.sql import func
@@ -42,8 +43,14 @@ class KnowledgeBaseVersion(Base):
     version_name = Column(
         String(50),
         nullable=False,
-        unique=True,
         comment="版本名称（v+时间戳格式 v20260422_103000）"
+    )
+
+    # 版本编码（毫秒时间戳）
+    version_code = Column(
+        BigInteger,
+        nullable=False,
+        comment="版本编码（毫秒时间戳，用于排序）"
     )
 
     # 状态
@@ -108,8 +115,10 @@ class KnowledgeBaseVersion(Base):
         comment="更新时间"
     )
 
-    # 索引
+    # 约束
     __table_args__ = (
+        UniqueConstraint("version_name", name="uk_kb_version_version_name"),
+        UniqueConstraint("version_code", name="uk_kb_version_version_code"),
         Index("idx_kb_version_status", "status"),
         {"comment": "知识库版本表"}
     )
@@ -119,6 +128,7 @@ class KnowledgeBaseVersion(Base):
         return {
             "id": str(self.id),
             "version_name": self.version_name,
+            "version_code": self.version_code,
             "status": self.status,
             "document_count": self.document_count,
             "chunk_count": self.chunk_count,

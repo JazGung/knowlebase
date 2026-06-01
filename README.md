@@ -139,6 +139,8 @@ curl --noproxy localhost http://localhost:8000/docs
 | :--- | :--- | :--- | :--- |
 | `ELASTICSEARCH_HOST` | str | `localhost` | ES 地址 |
 | `ELASTICSEARCH_PORT` | int | `9200` | ES 端口 |
+| `ELASTICSEARCH_USERNAME` | str | — | ES 用户名（启用安全认证时填写） |
+| `ELASTICSEARCH_PASSWORD` | str | — | ES 密码（启用安全认证时填写） |
 | `MILVUS_HOST` | str | `localhost` | Milvus 地址 |
 | `MILVUS_PORT` | int | `19530` | Milvus 端口 |
 | `NEO4J_HOST` | str | `localhost` | Neo4j 地址 |
@@ -148,6 +150,10 @@ curl --noproxy localhost http://localhost:8000/docs
 | `MINIO_ENDPOINT` | str | `localhost:9000` | MinIO 地址 |
 | `MINIO_ACCESS_KEY` | str | `minioadmin` | MinIO 访问密钥 |
 | `MINIO_SECRET_KEY` | str | `minioadmin` | MinIO 密钥 |
+| `MINIO_SECURE` | bool | `false` | 是否使用 HTTPS |
+| `MINIO_REGION` | str | — | MinIO 区域 |
+| `MINIO_DOCUMENT_BUCKET` | str | `knowlebase-documents` | 文档存储桶 |
+| `MINIO_TEMP_BUCKET` | str | `knowlebase-temp` | 临时文件存储桶 |
 
 ## AI 网关
 
@@ -168,6 +174,24 @@ curl --noproxy localhost http://localhost:8000/docs
 
 Higress 侧为每个逻辑名配置对应的 provider、model、api_key 等路由规则，应用不感知。
 
+## 文档处理
+
+| 配置项 | 类型 | 默认值 | 说明 |
+| :--- | :--- | :--- | :--- |
+| `CHUNK_MAX_CHARS` | int | `800` | 最大分块字符数，仅支持绝对值 |
+| `CHUNK_MIN_CHARS` | int / float | `0.5` | 最小分块字符数。值在 `(0, 1)` 内视为 `max_chars` 的比例，`≥1` 视为绝对值 |
+| `CHUNK_OVERLAP` | int / float | `0.1` | 窗口重叠量。值在 `(0, 1)` 内视为 `max_chars` 的比例，`≥1` 视为绝对值 |
+| `CHUNK_WINDOW` | int / float | `1.5` | 窗口大小。值在 `(1, 5)` 内视为 `max_chars` 的比例，`≥5` 视为绝对值 |
+| `MAX_FILE_SIZE` | int | `104857600` | 文档处理最大文件大小（字节），默认 100MB |
+
+## 模型与嵌入
+
+| 配置项 | 类型 | 默认值 | 说明 |
+| :--- | :--- | :--- | :--- |
+| `EMBEDDING_MODEL` | str | `BAAI/bge-small-zh-v1.5` | sentence-transformers 模型名称 |
+| `EMBEDDING_DIMENSION` | int | `512` | 嵌入向量维度 |
+| `EMBEDDING_DEVICE` | str | `cpu` | 推理设备，可选 `cpu` / `cuda:0` |
+
 ## 数据持久化
 
 | 配置项 | 类型 | 默认值 | 说明 |
@@ -180,6 +204,8 @@ Higress 侧为每个逻辑名配置对应的 provider、model、api_key 等路�
 | :--- | :--- | :--- | :--- |
 | `SECRET_KEY` | str | — | FastAPI 密钥 |
 | `JWT_SECRET_KEY` | str | — | JWT 签名密钥 |
+| `JWT_ALGORITHM` | str | `HS256` | JWT 签名算法 |
+| `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` | int | `30` | JWT 过期时间（分钟） |
 | `CORS_ORIGINS` | list | `["http://localhost:5173"]` | 允许的跨域来源 |
 
 ## 部署模式
@@ -189,6 +215,8 @@ Higress 侧为每个逻辑名配置对应的 provider、model、api_key 等路�
 | `DEBUG` | bool | `true` | 调试模式 |
 | `BACKEND_HOST` | str | `0.0.0.0` | 后端监听地址 |
 | `BACKEND_PORT` | int | `8000` | 后端端口 |
+| `DEVELOPMENT_MODE` | bool | `false` | 本地开发模式标志 |
+| `DOCKER_CONTAINER` | bool | `false` | 容器环境标志 |
 
 # 运维管理
 

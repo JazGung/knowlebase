@@ -37,12 +37,16 @@ class Neo4jService:
             logger.info(f"Neo4j 驱动已创建: {settings.neo4j_url}")
         return self._driver
 
-    async def write_graph(self, document_id: str, relations: List[Dict]) -> None:
+    async def write_graph(
+        self, document_id: str, relations: List[Dict],
+        enabled: bool = True,
+    ) -> None:
         """对每个三元组，执行 MERGE + CONTAINS + {predicate} 关系创建
 
         Args:
             document_id: 文档ID（字符串形式）
             relations: [{"source": str, "relationship": str, "target": str, "chunk_id": str}, ...]
+            enabled: enabled 初始值，默认 True
         """
         if not relations:
             return
@@ -61,7 +65,7 @@ class Neo4jService:
                     MERGE (o:Entity {{name: $target}})
                     MERGE (d)-[:CONTAINS]->(s)
                     MERGE (d)-[:CONTAINS]->(o)
-                    MERGE (s)-[:`{predicate}` {{document_id: $document_id, chunk_id: $chunk_id}}]->(o)
+                    MERGE (s)-[:`{predicate}` {{document_id: $document_id, chunk_id: $chunk_id, enabled: true}}]->(o)
                     """,
                     document_id=document_id,
                     source=source,
@@ -116,6 +120,36 @@ class Neo4jService:
                 """,
             )
         logger.debug(f"Neo4j 清理完成: document_id={document_id}")
+
+    async def search_entities(self, entities: list[str], size: int = 20) -> list[dict]:
+        """图谱实体检索，返回 [(chunk_id, score), ...]
+
+        按抽取的实体名称匹配 Entity 节点，沿关系边遍历获取关联 chunk_id。
+        score 按匹配到的关系数量计数。
+
+        Args:
+            entities: 从查询文本抽取的实体名称列表
+            size: 返回条数上限
+        """
+        if not entities:
+            return []
+        async with self.driver.session() as session:
+            result = await session.run(
+                """
+                MATCH (e:Entity)-[r]->()
+                WHERE e.name IN $entities AND r.chunk_id IS NOT NULL AND r.enabled = true
+                RETURN DISTINCT r.chunk_id AS chunk_id, COUNT(r) AS score
+                ORDER BY score DESC
+                LIMIT $size
+                """,
+                entities=entities,
+                size=size,
+            )
+            records = await result.data()
+            return [
+                {"chunk_id": rec["chunk_id"], "score": float(rec["score"])}
+                for rec in records
+            ]
 
     async def close(self) -> None:
         if self._driver is not None:

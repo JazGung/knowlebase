@@ -190,3 +190,24 @@ export async function getProcessingDetail({ relationIds, processingId } = {}) {
 export function createProcessingStream(processingId) {
   return new EventSource(`${BASE_URL}/build/stream/${encodeURIComponent(processingId)}`)
 }
+
+// ==================== 检索域 ====================
+
+/** POST /retrieval/debug - 检索调试 */
+export async function debugSearch({ query, versionId, topN } = {}) {
+  const res = await request('/retrieval/debug', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query, version_id: versionId, top_n: topN }),
+  })
+  return res.content || {
+    es_results: [], milvus_results: [], neo4j_results: [],
+    merged_results: [], reranked_results: [],
+  }
+}
+
+/** GET /retrieval/versions - 可用版本列表 */
+export async function getRetrievalVersions() {
+  const res = await request('/retrieval/versions')
+  return res.content || { versions: [] }
+}

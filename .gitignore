@@ -77,5 +77,4 @@ CLAUDE.md
 .claude
 plantuml.jar
 .gitignore
-frontend/test-results/.last-run.json
-CLAUDE-1.md
+frontend/test-results/

@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import DocumentList from '../views/DocumentList.vue'
 import VersionList from '../views/VersionList.vue'
+import RetrievalDebug from '../views/RetrievalDebug.vue'
 
 const routes = [
   {
@@ -16,6 +17,11 @@ const routes = [
     path: '/versions',
     name: 'versions',
     component: VersionList,
+  },
+  {
+    path: '/retrieval/debug',
+    name: 'retrievalDebug',
+    component: RetrievalDebug,
   },
 ]
 

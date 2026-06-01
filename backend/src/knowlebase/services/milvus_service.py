@@ -26,6 +26,8 @@ COLLECTION_NAME = "document_chunk"
 FIELDS = [
     FieldSchema(name="chunk_id", dtype=DataType.VARCHAR, max_length=64, is_primary=True),
     FieldSchema(name="document_id", dtype=DataType.VARCHAR, max_length=64),
+    FieldSchema(name="version_id", dtype=DataType.VARCHAR, max_length=64),
+    FieldSchema(name="enabled", dtype=DataType.BOOL),
     FieldSchema(name="vector", dtype=DataType.FLOAT_VECTOR, dim=settings.embedding_dimension),
 ]
 
@@ -70,7 +72,8 @@ class MilvusService:
         """批量插入向量
 
         Args:
-            entries: [{"chunk_id": str, "document_id": str, "vector": List[float]}, ...]
+            entries: [{"chunk_id": str, "document_id": str, "version_id": str,
+                        "enabled": bool, "vector": List[float]}, ...]
         """
         if not entries:
             return
@@ -78,6 +81,8 @@ class MilvusService:
         data = [
             [e["chunk_id"] for e in entries],
             [e["document_id"] for e in entries],
+            [str(e.get("version_id", "")) for e in entries],
+            [e.get("enabled", True) for e in entries],
             [e["vector"] for e in entries],
         ]
         collection.insert(data)
@@ -95,6 +100,35 @@ class MilvusService:
         collection.delete(expr)
         collection.flush()
         logger.debug(f"Milvus 删除完成: document_id={document_id}")
+
+    def search(
+        self, query_vector: list[float], size: int = 20,
+        version_id: str | None = None,
+    ) -> list[dict]:
+        """向量相似性检索，返回 [(chunk_id, score), ...]
+
+        Args:
+            query_vector: 查询向量
+            size: 返回条数上限
+            version_id: 版本 ID 过滤（可选）
+        """
+        collection = self.ensure_collection()
+        expr_parts = ["enabled == true"]
+        if version_id:
+            expr_parts.append(f'version_id == "{version_id}"')
+        expr = " && ".join(expr_parts)
+        results = collection.search(
+            data=[query_vector],
+            anns_field="vector",
+            param={"metric_type": "IP", "params": {"nprobe": 16}},
+            limit=size,
+            expr=expr,
+            output_fields=["chunk_id"],
+        )
+        return [
+            {"chunk_id": hit.entity.get("chunk_id"), "score": hit.distance}
+            for hit in results[0]
+        ]
 
     def close(self) -> None:
         if self._connected:

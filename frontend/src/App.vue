@@ -21,6 +21,10 @@
           <el-icon><Connection /></el-icon>
           <span>版本管理</span>
         </el-menu-item>
+        <el-menu-item index="/retrieval/debug">
+          <el-icon><Search /></el-icon>
+          <span>检索调试</span>
+        </el-menu-item>
       </el-menu>
     </el-aside>
 
@@ -39,7 +43,7 @@
 <script setup>
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { Files, Document, Connection } from '@element-plus/icons-vue'
+import { Files, Document, Connection, Search } from '@element-plus/icons-vue'
 
 const route = useRoute()
 
@@ -49,6 +53,7 @@ const currentPageTitle = computed(() => {
   const titles = {
     '/documents': '文档管理',
     '/versions': '版本管理',
+    '/retrieval/debug': '检索调试',
   }
   return titles[route.path] || '知识库管理系统'
 })
