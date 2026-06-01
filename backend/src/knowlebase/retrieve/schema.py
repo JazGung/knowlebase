@@ -2,10 +2,10 @@
 检索域 — Pydantic 请求/响应模型
 """
 
-from enum import Enum
 from typing import Optional
 from pydantic import BaseModel, Field
-from fastapi.responses import JSONResponse
+
+from knowlebase.schemas.errors import ErrorCode
 
 
 # ==================== 请求体 ====================
@@ -62,50 +62,11 @@ class VersionListResponse(BaseModel):
     versions: list[VersionOption] = Field(default_factory=list, description="可选版本列表")
 
 
-# ==================== 错误码与响应 ====================
+# ==================== 错误码 ====================
 
-class RetrievalErrorCode(str, Enum):
+class RetrievalErrorCode(ErrorCode):
     """检索域错误码"""
-    RETRIEVAL_NO_ENABLED_VERSION = "404001"
-    RETRIEVAL_VERSION_NOT_FOUND = "404002"
-    RETRIEVAL_VERSION_NOT_BUILT = "400001"
-    RETRIEVAL_INTERNAL_ERROR = "500000"
-
-
-class RetrievalError(Exception):
-    """检索域业务异常"""
-
-    def __init__(self, code: RetrievalErrorCode, detail: str = ""):
-        self.code = code
-        self.detail = detail
-
-
-class RetrievalResponse:
-    """检索域统一响应"""
-
-    _OK = "000000"
-
-    def __init__(self):
-        self._code = self._OK
-        self._description = "成功"
-        self._content = None
-
-    def ok(self, content) -> None:
-        self._code = self._OK
-        self._description = "成功"
-        self._content = content
-
-    def error(self, e: RetrievalError) -> None:
-        self._code = e.code.value
-        self._description = e.detail
-        self._content = None
-
-    def to_json(self) -> JSONResponse:
-        return JSONResponse(
-            status_code=200,
-            content={
-                "code": self._code,
-                "description": self._description,
-                "content": self._content,
-            },
-        )
+    RETRIEVAL_NO_ENABLED_VERSION = ("404001", "暂无已启用的知识库版本")
+    RETRIEVAL_VERSION_NOT_FOUND = ("404002", "指定的知识库版本不存在")
+    RETRIEVAL_VERSION_NOT_BUILT = ("400001", "指定版本尚未构建完成，无可检索数据")
+    RETRIEVAL_INTERNAL_ERROR = ("500000", "检索域内部错误")

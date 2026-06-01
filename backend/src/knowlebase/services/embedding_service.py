@@ -37,7 +37,8 @@ class EmbeddingService:
 
     @property
     def dimension(self) -> int:
-        return settings.embedding_dimension
+        """返回加载后模型的实际输出维度"""
+        return self.model.get_sentence_embedding_dimension()
 
     def encode(self, texts: List[str]) -> List[List[float]]:
         """对文本列表进行批量嵌入，返回向量列表"""

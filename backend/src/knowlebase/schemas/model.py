@@ -1,10 +1,24 @@
 """
-模型域 Pydantic schemas
+模型域 Pydantic schemas — 请求/响应模型、错误码枚举
 """
 
 from typing import List
 
 from pydantic import BaseModel, Field
+
+from knowlebase.schemas.errors import ErrorCode
+
+
+class ModelErrorCode(ErrorCode):
+    """模型域错误码（与 DEG §4.2 一致）"""
+    UNSUPPORTED_FORMAT = ("400002", "不支持的文档格式")
+    INVALID_INPUT = ("400003", "无效的模型输入")
+    INFERENCE_FAILED = ("500006", "模型推理失败")
+    MODEL_LOAD_FAILED = ("503005", "模型加载失败")
+    INTERNAL_ERROR = ("500000", "模型域内部错误")
+
+
+# ==================== 请求/响应模型 ====================
 
 
 class ParseRequest(BaseModel):

@@ -22,9 +22,8 @@ from knowlebase.retrieve.schema import (
     VersionOption,
     ChunkTextItem,
     RetrievalErrorCode,
-    RetrievalError,
-    RetrievalResponse,
 )
+from knowlebase.schemas.errors import BusinessError, UnifiedResponse
 from knowlebase.retrieve.service import get_search_service, SearchService
 
 logger = logging.getLogger(__name__)
@@ -38,7 +37,7 @@ async def search(
     db: AsyncSession = Depends(get_db),
     search_service: SearchService = Depends(get_search_service),
 ):
-    response = RetrievalResponse()
+    response = UnifiedResponse()
     try:
         result = await db.execute(
             select(KnowledgeBaseVersion).where(
@@ -47,7 +46,7 @@ async def search(
         )
         version = result.scalar_one_or_none()
         if not version:
-            raise RetrievalError(RetrievalErrorCode.RETRIEVAL_NO_ENABLED_VERSION)
+            raise BusinessError(RetrievalErrorCode.RETRIEVAL_NO_ENABLED_VERSION)
 
         top_n = request.top_n or settings.search_results_limit
 
@@ -62,11 +61,11 @@ async def search(
         ]
         response.ok({"results": [i.model_dump() for i in items]})
 
-    except RetrievalError as e:
+    except BusinessError as e:
         response.error(e)
     except Exception as e:
         logger.error(f"检索失败: {e}", exc_info=True)
-        response.error(RetrievalError(RetrievalErrorCode.RETRIEVAL_INTERNAL_ERROR, str(e)))
+        response.error(BusinessError(RetrievalErrorCode.RETRIEVAL_INTERNAL_ERROR, str(e)))
 
     return response.to_json()
 
@@ -81,7 +80,7 @@ async def debug_search(
     db: AsyncSession = Depends(get_db),
     search_service: SearchService = Depends(get_search_service),
 ):
-    response = RetrievalResponse()
+    response = UnifiedResponse()
     try:
         result = await db.execute(
             select(KnowledgeBaseVersion).where(
@@ -90,9 +89,9 @@ async def debug_search(
         )
         version = result.scalar_one_or_none()
         if not version:
-            raise RetrievalError(RetrievalErrorCode.RETRIEVAL_VERSION_NOT_FOUND)
+            raise BusinessError(RetrievalErrorCode.RETRIEVAL_VERSION_NOT_FOUND)
         if version.status not in ("succeeded", "enabled", "disabled"):
-            raise RetrievalError(RetrievalErrorCode.RETRIEVAL_VERSION_NOT_BUILT)
+            raise BusinessError(RetrievalErrorCode.RETRIEVAL_VERSION_NOT_BUILT)
 
         top_n = request.top_n or settings.search_results_limit
 
@@ -109,11 +108,11 @@ async def debug_search(
             reranked_results=search_result.reranked_results,
         ).model_dump())
 
-    except RetrievalError as e:
+    except BusinessError as e:
         response.error(e)
     except Exception as e:
         logger.error(f"检索调试失败: {e}", exc_info=True)
-        response.error(RetrievalError(RetrievalErrorCode.RETRIEVAL_INTERNAL_ERROR, str(e)))
+        response.error(BusinessError(RetrievalErrorCode.RETRIEVAL_INTERNAL_ERROR, str(e)))
 
     return response.to_json()
 
@@ -124,7 +123,7 @@ async def debug_search(
     tags=["检索域"],
 )
 async def get_versions(db: AsyncSession = Depends(get_db)):
-    response = RetrievalResponse()
+    response = UnifiedResponse()
     try:
         result = await db.execute(
             select(KnowledgeBaseVersion)
@@ -150,10 +149,10 @@ async def get_versions(db: AsyncSession = Depends(get_db)):
             ]
         })
 
-    except RetrievalError as e:
+    except BusinessError as e:
         response.error(e)
     except Exception as e:
         logger.error(f"获取版本列表失败: {e}", exc_info=True)
-        response.error(RetrievalError(RetrievalErrorCode.RETRIEVAL_INTERNAL_ERROR, str(e)))
+        response.error(BusinessError(RetrievalErrorCode.RETRIEVAL_INTERNAL_ERROR, str(e)))
 
     return response.to_json()

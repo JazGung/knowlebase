@@ -7,7 +7,7 @@
 import logging
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
+from fastapi import APIRouter, Depends, UploadFile, File, Form, Query
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,6 +20,8 @@ from knowlebase.schemas.document import (
     BaseResponse,
     BatchResult,
 )
+from knowlebase.schemas.resource_errors import ResourceErrorCode
+from knowlebase.schemas.errors import BusinessError, UnifiedResponse
 from knowlebase.resource.document.service import (
     get_upload_service,
     UploadService,
@@ -34,7 +36,6 @@ router = APIRouter()
 
 @router.post(
     "/check",
-    response_model=BaseResponse,
     summary="文件重复性校验",
     tags=["文档管理"]
 )
@@ -44,6 +45,7 @@ async def check(
     upload_service: UploadService = Depends(get_upload_service)
 ):
     """批量检查文件哈希是否与已有文件重复"""
+    response = UnifiedResponse()
     try:
         logger.info(f"重复性校验请求: {len(request.files)} 个文件")
 
@@ -51,23 +53,19 @@ async def check(
             db,
             [{"filename": item.filename, "hash": item.hash} for item in request.files]
         )
+        response.ok({"duplicates": duplicates})
 
-        return BaseResponse(
-            description="重复性校验完成",
-            content={"duplicates": duplicates}
-        )
-
+    except BusinessError:
+        raise
     except Exception as e:
         logger.error(f"重复性校验失败: {e}", exc_info=True)
-        return JSONResponse(
-            status_code=200,
-            content={"code": "500000", "description": "重复性校验失败", "content": None}
-        )
+        response.error(BusinessError(ResourceErrorCode.DATABASE_UNAVAILABLE, str(e)))
+
+    return response.to_json()
 
 
 @router.post(
     "/upload",
-    response_model=BaseResponse,
     summary="单文件上传",
     tags=["文档管理"]
 )
@@ -79,6 +77,7 @@ async def upload(
     upload_service: UploadService = Depends(get_upload_service)
 ):
     """单文件上传，包含完整性验证"""
+    response = UnifiedResponse()
     try:
         logger.info(f"文件上传请求: {file.filename}, hash: {hash}")
 
@@ -91,23 +90,19 @@ async def upload(
             metadata=metadata,
             user_id=None
         )
+        response.ok(upload_result)
 
-        return BaseResponse(
-            description="文档上传成功",
-            content=upload_result
-        )
-
+    except BusinessError:
+        raise
     except Exception as e:
         logger.error(f"文件上传失败: {file.filename} - {e}", exc_info=True)
-        return JSONResponse(
-            status_code=200,
-            content={"code": "500000", "description": "文件上传失败", "content": None}
-        )
+        response.error(BusinessError(ResourceErrorCode.DOCUMENT_SAVE_FAILED, str(e)))
+
+    return response.to_json()
 
 
 @router.get(
     "/list",
-    response_model=BaseResponse,
     summary="文档列表分页查询",
     tags=["文档管理"]
 )
@@ -122,6 +117,7 @@ async def query(
     document_service: DocumentService = Depends(get_document_service)
 ):
     """查询文档列表，支持分页、过滤、搜索、排序"""
+    response = UnifiedResponse()
     try:
         query_params = DocumentListQuery(
             page=page,
@@ -133,23 +129,19 @@ async def query(
         )
 
         result = await document_service.get_document_list(db, query_params)
+        response.ok(result)
 
-        return BaseResponse(
-            description="文档列表查询成功",
-            content=result
-        )
-
+    except BusinessError:
+        raise
     except Exception as e:
         logger.error(f"文档列表查询失败: {e}", exc_info=True)
-        return JSONResponse(
-            status_code=200,
-            content={"code": "500000", "description": "文档列表查询失败", "content": None}
-        )
+        response.error(BusinessError(ResourceErrorCode.DATABASE_UNAVAILABLE, str(e)))
+
+    return response.to_json()
 
 
 @router.get(
     "/detail",
-    response_model=BaseResponse,
     summary="文档详情查询",
     tags=["文档管理"]
 )
@@ -159,31 +151,26 @@ async def detail(
     document_service: DocumentService = Depends(get_document_service)
 ):
     """查询文档详情，包含处理历史记录"""
+    response = UnifiedResponse()
     try:
         result = await document_service.get_document_detail(db, document_id)
 
         if not result:
-            return JSONResponse(
-                status_code=200,
-                content={"code": "404001", "description": "文档不存在", "content": None}
-            )
+            raise BusinessError(ResourceErrorCode.DOCUMENT_NOT_FOUND, "文档不存在")
 
-        return BaseResponse(
-            description="文档详情查询成功",
-            content=result
-        )
+        response.ok(result)
 
+    except BusinessError:
+        raise
     except Exception as e:
         logger.error(f"文档详情查询失败: {e}", exc_info=True)
-        return JSONResponse(
-            status_code=200,
-            content={"code": "500000", "description": "文档详情查询失败", "content": None}
-        )
+        response.error(BusinessError(ResourceErrorCode.DATABASE_UNAVAILABLE, str(e)))
+
+    return response.to_json()
 
 
 @router.put(
     "/enable",
-    response_model=BaseResponse,
     summary="文档启用",
     tags=["文档管理"]
 )
@@ -193,32 +180,32 @@ async def enable(
     document_service: DocumentService = Depends(get_document_service)
 ):
     """批量启用文档"""
+    response = UnifiedResponse()
     try:
         results = []
         for doc_id in request.document_ids:
             try:
                 await document_service.enable_document(db, str(doc_id))
                 results.append(BatchResult(id=str(doc_id), status="success"))
+            except BusinessError as e:
+                results.append(BatchResult(id=str(doc_id), status="failed", reason=e.description))
             except Exception as e:
                 logger.error(f"启用文档 {doc_id} 失败: {e}")
                 results.append(BatchResult(id=str(doc_id), status="failed", reason=str(e)))
 
-        return BaseResponse(
-            description="文档启用完成",
-            content={"results": [r.model_dump() for r in results]}
-        )
+        response.ok({"results": [r.model_dump() for r in results]})
 
+    except BusinessError:
+        raise
     except Exception as e:
         logger.error(f"文档启用失败: {e}", exc_info=True)
-        return JSONResponse(
-            status_code=200,
-            content={"code": "500000", "description": "文档启用失败", "content": None}
-        )
+        response.error(BusinessError(ResourceErrorCode.DATABASE_UNAVAILABLE, str(e)))
+
+    return response.to_json()
 
 
 @router.put(
     "/disable",
-    response_model=BaseResponse,
     summary="文档停用",
     tags=["文档管理"]
 )
@@ -228,32 +215,32 @@ async def disable(
     document_service: DocumentService = Depends(get_document_service)
 ):
     """批量停用文档"""
+    response = UnifiedResponse()
     try:
         results = []
         for doc_id in request.document_ids:
             try:
                 await document_service.disable_document(db, str(doc_id))
                 results.append(BatchResult(id=str(doc_id), status="success"))
+            except BusinessError as e:
+                results.append(BatchResult(id=str(doc_id), status="failed", reason=e.description))
             except Exception as e:
                 logger.error(f"停用文档 {doc_id} 失败: {e}")
                 results.append(BatchResult(id=str(doc_id), status="failed", reason=str(e)))
 
-        return BaseResponse(
-            description="文档停用完成",
-            content={"results": [r.model_dump() for r in results]}
-        )
+        response.ok({"results": [r.model_dump() for r in results]})
 
+    except BusinessError:
+        raise
     except Exception as e:
         logger.error(f"文档停用失败: {e}", exc_info=True)
-        return JSONResponse(
-            status_code=200,
-            content={"code": "500000", "description": "文档停用失败", "content": None}
-        )
+        response.error(BusinessError(ResourceErrorCode.DATABASE_UNAVAILABLE, str(e)))
+
+    return response.to_json()
 
 
 @router.post(
     "/process",
-    response_model=BaseResponse,
     summary="文档处理",
     tags=["文档管理"]
 )
@@ -263,6 +250,7 @@ async def process(
     document_service: DocumentService = Depends(get_document_service)
 ):
     """批量触发文档处理，启动解析、分块、向量化等处理流水线（DEG 4.10）"""
+    response = UnifiedResponse()
     try:
         logger.info(f"批量处理请求: {len(request.document_ids)} 个文档")
 
@@ -270,15 +258,12 @@ async def process(
             db,
             request.document_ids
         )
+        response.ok({"results": [r.model_dump() for r in results]})
 
-        return BaseResponse(
-            description="文档处理已触发",
-            content={"results": [r.model_dump() for r in results]}
-        )
-
+    except BusinessError:
+        raise
     except Exception as e:
         logger.error(f"触发文档处理失败: {e}", exc_info=True)
-        return JSONResponse(
-            status_code=200,
-            content={"code": "500000", "description": "触发文档处理失败", "content": None}
-        )
+        response.error(BusinessError(ResourceErrorCode.DATABASE_UNAVAILABLE, str(e)))
+
+    return response.to_json()

@@ -5,8 +5,9 @@
 import hashlib
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from fastapi import HTTPException
 
+from knowlebase.schemas.errors import BusinessError
+from knowlebase.schemas.resource_errors import ResourceErrorCode
 from knowlebase.resource.document.service import UploadService
 
 
@@ -78,23 +79,23 @@ class TestValidateFileFormatAndSize:
 
     @pytest.mark.asyncio
     async def test_invalid_extension(self, service):
-        with pytest.raises(Exception) as exc_info:
+        with pytest.raises(BusinessError) as exc_info:
             await service.validate_file_format_and_size("image.png", 1024)
-        assert exc_info.value.status_code == 400
+        assert exc_info.value.code == ResourceErrorCode.FILE_FORMAT_NOT_SUPPORTED.value
 
     @pytest.mark.asyncio
     async def test_file_too_large(self, service):
-        with pytest.raises(Exception) as exc_info:
+        with pytest.raises(BusinessError) as exc_info:
             # max_file_size = 104857600 (100MB)
             await service.validate_file_format_and_size("big.pdf", 104857601)
-        assert exc_info.value.status_code == 400
+        assert exc_info.value.code == ResourceErrorCode.FILE_SIZE_EXCEEDED.value
 
     @pytest.mark.asyncio
     async def test_filename_too_long(self, service):
         long_name = "a" * 256 + ".pdf"
-        with pytest.raises(Exception) as exc_info:
+        with pytest.raises(BusinessError) as exc_info:
             await service.validate_file_format_and_size(long_name, 1024)
-        assert exc_info.value.status_code == 400
+        assert exc_info.value.code == ResourceErrorCode.INVALID_PARAMETER.value
 
 
 class TestCleanupOrphanedFile:
@@ -247,10 +248,9 @@ class TestProcessUpload:
 
         mock_db = AsyncMock()
 
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(BusinessError) as exc_info:
             await service.process_upload(mock_db, mock_file, wrong_hash)
-        assert exc_info.value.status_code == 400
-        assert "上传文件不完整" in str(exc_info.value.detail)
+        assert exc_info.value.code == ResourceErrorCode.FILE_HASH_MISMATCH.value
 
     @pytest.mark.asyncio
     async def test_invalid_format(self, service):
@@ -261,10 +261,9 @@ class TestProcessUpload:
         mock_db = AsyncMock()
         mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
 
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(BusinessError) as exc_info:
             await service.process_upload(mock_db, mock_file, file_hash)
-        assert exc_info.value.status_code == 400
-        assert "格式" in str(exc_info.value.detail)
+        assert exc_info.value.code == ResourceErrorCode.FILE_FORMAT_NOT_SUPPORTED.value
 
     @pytest.mark.asyncio
     async def test_file_too_large(self, service):
@@ -275,10 +274,9 @@ class TestProcessUpload:
         mock_db = AsyncMock()
         mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
 
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(BusinessError) as exc_info:
             await service.process_upload(mock_db, mock_file, file_hash)
-        assert exc_info.value.status_code == 400
-        assert "大小" in str(exc_info.value.detail)
+        assert exc_info.value.code == ResourceErrorCode.FILE_SIZE_EXCEEDED.value
 
     @pytest.mark.asyncio
     async def test_db_commit_failure_cleanup(self, service):
@@ -293,9 +291,9 @@ class TestProcessUpload:
         mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
         mock_db.commit = AsyncMock(side_effect=Exception("DB error"))
 
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(BusinessError) as exc_info:
             await service.process_upload(mock_db, mock_file, file_hash)
-        assert exc_info.value.status_code == 500
+        assert exc_info.value.code == ResourceErrorCode.DOCUMENT_SAVE_FAILED.value
         # Verify orphaned file cleanup was attempted
         service.minio_service.delete_file.assert_called_once()
 
@@ -314,7 +312,6 @@ class TestProcessUpload:
             scalar_one_or_none=MagicMock(return_value=building_version)
         ))
 
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(BusinessError) as exc_info:
             await service.process_upload(mock_db, mock_file, file_hash)
-        assert exc_info.value.status_code == 400
-        assert "构建中" in str(exc_info.value.detail)
+        assert exc_info.value.code == ResourceErrorCode.BUILDING_IN_PROGRESS.value

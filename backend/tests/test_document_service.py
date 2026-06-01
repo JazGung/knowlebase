@@ -5,7 +5,8 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from fastapi import HTTPException
+from knowlebase.schemas.errors import BusinessError
+from knowlebase.schemas.resource_errors import ResourceErrorCode
 
 from knowlebase.resource.document.service import DocumentService
 from knowlebase.schemas.document import DocumentListQuery
@@ -212,21 +213,23 @@ class TestEnableDocument:
         with patch("knowlebase.resource.document.service.DocumentRepository") as mock_repo_cls:
             mock_repo_cls.return_value.get_by_id = AsyncMock(return_value=None)
 
-            with pytest.raises(HTTPException) as exc_info:
+            with pytest.raises(BusinessError) as exc_info:
                 await service.enable_document(mock_db, "999")
-            assert exc_info.value.status_code == 404
+            assert exc_info.value.code == ResourceErrorCode.DOCUMENT_NOT_FOUND.value
 
     @pytest.mark.asyncio
     async def test_enable_already_enabled(self, service):
         mock_db = AsyncMock()
+        # building lock check → no building version
+        mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
         doc = make_mock_document(overrides={"status": "enabled"})
 
         with patch("knowlebase.resource.document.service.DocumentRepository") as mock_repo_cls:
             mock_repo_cls.return_value.get_by_id = AsyncMock(return_value=doc)
 
-            with pytest.raises(HTTPException) as exc_info:
+            with pytest.raises(BusinessError) as exc_info:
                 await service.enable_document(mock_db, "123")
-            assert exc_info.value.status_code == 400
+            assert exc_info.value.code == ResourceErrorCode.DOCUMENT_ALREADY_ENABLED.value
 
     @pytest.mark.asyncio
     async def test_enable_blocked_by_building(self, service):
@@ -237,10 +240,9 @@ class TestEnableDocument:
             scalar_one_or_none=MagicMock(return_value=building_version)
         ))
 
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(BusinessError) as exc_info:
             await service.enable_document(mock_db, "123")
-        assert exc_info.value.status_code == 400
-        assert "构建中" in str(exc_info.value.detail)
+        assert exc_info.value.code == ResourceErrorCode.BUILDING_IN_PROGRESS.value
 
 
 class TestDisableDocument:
@@ -272,21 +274,23 @@ class TestDisableDocument:
         with patch("knowlebase.resource.document.service.DocumentRepository") as mock_repo_cls:
             mock_repo_cls.return_value.get_by_id = AsyncMock(return_value=None)
 
-            with pytest.raises(HTTPException) as exc_info:
+            with pytest.raises(BusinessError) as exc_info:
                 await service.disable_document(mock_db, "999")
-            assert exc_info.value.status_code == 404
+            assert exc_info.value.code == ResourceErrorCode.DOCUMENT_NOT_FOUND.value
 
     @pytest.mark.asyncio
     async def test_disable_already_disabled(self, service):
         mock_db = AsyncMock()
+        # building lock check → no building version
+        mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
         doc = make_mock_document(overrides={"status": "disabled"})
 
         with patch("knowlebase.resource.document.service.DocumentRepository") as mock_repo_cls:
             mock_repo_cls.return_value.get_by_id = AsyncMock(return_value=doc)
 
-            with pytest.raises(HTTPException) as exc_info:
+            with pytest.raises(BusinessError) as exc_info:
                 await service.disable_document(mock_db, "123")
-            assert exc_info.value.status_code == 400
+            assert exc_info.value.code == ResourceErrorCode.DOCUMENT_ALREADY_DISABLED.value
 
     @pytest.mark.asyncio
     async def test_disable_blocked_by_building(self, service):
@@ -297,10 +301,9 @@ class TestDisableDocument:
             scalar_one_or_none=MagicMock(return_value=building_version)
         ))
 
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(BusinessError) as exc_info:
             await service.disable_document(mock_db, "123")
-        assert exc_info.value.status_code == 400
-        assert "构建中" in str(exc_info.value.detail)
+        assert exc_info.value.code == ResourceErrorCode.BUILDING_IN_PROGRESS.value
 
 
 def _make_execute_side_effect(enabled_version=True, building_version=None):

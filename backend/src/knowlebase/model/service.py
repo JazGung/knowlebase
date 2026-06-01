@@ -10,17 +10,11 @@ import logging
 from typing import List
 
 from knowlebase.parsers import parse_document
-from knowlebase.services.embedding_service import EmbeddingService
+from knowlebase.schemas.model import ModelErrorCode
+from knowlebase.schemas.errors import BusinessError
+from knowlebase.services.embedding_service import get_embedding_service
 
 logger = logging.getLogger(__name__)
-
-_embedding_instance: EmbeddingService | None = None
-
-
-def _get_embedding_service() -> EmbeddingService:
-    global _embedding_instance
-    if _embedding_instance is None:
-        _embedding_instance = EmbeddingService()
     return _embedding_instance
 
 
@@ -34,16 +28,27 @@ async def run_parsing(file_content_b64: str, file_format: str, file_name: str) -
 
     Returns:
         dict: 解析结果（sections 列表）
-
-    Raises:
-        ValueError: 不支持的文件格式
     """
-    content = base64.b64decode(file_content_b64)
-    result = await parse_document(
-        content=content,
-        filename=file_name,
-        mime_type=_format_to_mime(file_format),
-    )
+    try:
+        mime = _format_to_mime(file_format)
+    except KeyError:
+        raise BusinessError(ModelErrorCode.UNSUPPORTED_FORMAT, f"不支持的文件格式: {file_format}")
+
+    try:
+        content = base64.b64decode(file_content_b64)
+    except Exception as e:
+        raise BusinessError(ModelErrorCode.INVALID_INPUT, f"base64 解码失败: {e}")
+
+    try:
+        result = await parse_document(
+            content=content,
+            filename=file_name,
+            mime_type=mime,
+        )
+    except Exception as e:
+        logger.error(f"文档解析失败: {e}", exc_info=True)
+        raise BusinessError(ModelErrorCode.INFERENCE_FAILED, f"文档解析失败: {e}")
+
     return {"sections": _sections_to_dict(result.sections)}
 
 
@@ -56,8 +61,21 @@ def run_embedding(text: str) -> dict:
     Returns:
         dict: { "vector": [...], "dimension": N }
     """
-    svc = _get_embedding_service()
-    vector = svc.encode_single(text)
+    if not text or not text.strip():
+        raise BusinessError(ModelErrorCode.INVALID_INPUT, "待向量化文本不能为空")
+
+    try:
+        svc = get_embedding_service()
+    except Exception as e:
+        logger.error(f"模型加载失败: {e}", exc_info=True)
+        raise BusinessError(ModelErrorCode.MODEL_LOAD_FAILED, f"模型加载失败: {e}")
+
+    try:
+        vector = svc.encode_single(text)
+    except Exception as e:
+        logger.error(f"向量化失败: {e}", exc_info=True)
+        raise BusinessError(ModelErrorCode.INFERENCE_FAILED, f"向量化失败: {e}")
+
     return {
         "vector": vector,
         "dimension": len(vector),

@@ -8,12 +8,10 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
-from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from knowlebase.db.session import get_db
 from knowlebase.schemas.version import (
-    VersionListQuery,
     VersionCreateRequest,
     VersionBuildRequest,
     VersionEnableRequest,
@@ -21,6 +19,8 @@ from knowlebase.schemas.version import (
     VersionCreateSuccessResponse,
     VersionActionSuccessResponse,
 )
+from knowlebase.schemas.resource_errors import ResourceErrorCode
+from knowlebase.schemas.errors import BusinessError, UnifiedResponse
 from knowlebase.resource.version.service import (
     VersionService,
     get_version_service,
@@ -53,10 +53,13 @@ async def list_versions(
             try:
                 status_enum = VersionStatus(status_filter)
             except ValueError:
-                return JSONResponse(
-                    status_code=200,
-                    content={"code": 400, "message": f"无效的状态值: {status_filter}"}
+                err = BusinessError(
+                    ResourceErrorCode.INVALID_PARAMETER,
+                    f"无效的状态值: {status_filter}"
                 )
+                resp = UnifiedResponse()
+                resp.error(err)
+                return resp.to_json()
 
         versions, total = await version_service.list_versions(
             db, page=page, page_size=page_size, status_filter=status_enum
@@ -73,12 +76,15 @@ async def list_versions(
             }
         )
 
+    except BusinessError as e:
+        resp = UnifiedResponse()
+        resp.error(e)
+        return resp.to_json()
     except Exception as e:
         logger.error(f"版本列表查询失败: {e}", exc_info=True)
-        return JSONResponse(
-            status_code=200,
-            content={"code": 500, "message": "版本列表查询失败", "detail": str(e)}
-        )
+        resp = UnifiedResponse()
+        resp.error(BusinessError(ResourceErrorCode.DATABASE_UNAVAILABLE, str(e)))
+        return resp.to_json()
 
 
 @router.post(
@@ -107,12 +113,15 @@ async def create_version(
             }
         )
 
+    except BusinessError as e:
+        resp = UnifiedResponse()
+        resp.error(e)
+        return resp.to_json()
     except Exception as e:
         logger.error(f"版本创建失败: {e}", exc_info=True)
-        return JSONResponse(
-            status_code=200,
-            content={"code": 500, "message": "版本创建失败", "detail": str(e)}
-        )
+        resp = UnifiedResponse()
+        resp.error(BusinessError(ResourceErrorCode.DATABASE_UNAVAILABLE, str(e)))
+        return resp.to_json()
 
 
 @router.post(
@@ -142,16 +151,18 @@ async def build_version(
         )
 
     except ValueError as e:
-        return JSONResponse(
-            status_code=200,
-            content={"code": 400, "message": str(e)}
-        )
+        resp = UnifiedResponse()
+        resp.error(BusinessError(ResourceErrorCode.VERSION_CANNOT_BUILD, str(e)))
+        return resp.to_json()
+    except BusinessError as e:
+        resp = UnifiedResponse()
+        resp.error(e)
+        return resp.to_json()
     except Exception as e:
         logger.error(f"版本构建失败: {e}", exc_info=True)
-        return JSONResponse(
-            status_code=200,
-            content={"code": 500, "message": "版本构建失败", "detail": str(e)}
-        )
+        resp = UnifiedResponse()
+        resp.error(BusinessError(ResourceErrorCode.DATABASE_UNAVAILABLE, str(e)))
+        return resp.to_json()
 
 
 @router.put(
@@ -185,13 +196,15 @@ async def enable_version(
         )
 
     except ValueError as e:
-        return JSONResponse(
-            status_code=200,
-            content={"code": 400, "message": str(e)}
-        )
+        resp = UnifiedResponse()
+        resp.error(BusinessError(ResourceErrorCode.VERSION_CANNOT_ENABLE, str(e)))
+        return resp.to_json()
+    except BusinessError as e:
+        resp = UnifiedResponse()
+        resp.error(e)
+        return resp.to_json()
     except Exception as e:
         logger.error(f"版本启用失败: {e}", exc_info=True)
-        return JSONResponse(
-            status_code=200,
-            content={"code": 500, "message": "版本启用失败", "detail": str(e)}
-        )
+        resp = UnifiedResponse()
+        resp.error(BusinessError(ResourceErrorCode.DATABASE_UNAVAILABLE, str(e)))
+        return resp.to_json()

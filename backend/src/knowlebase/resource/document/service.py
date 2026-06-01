@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import PurePath
 from typing import Dict, List, Optional, Tuple
 
-from fastapi import HTTPException, UploadFile, status
+from fastapi import UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,6 +31,8 @@ from knowlebase.schemas.document import (
     IntegrityValidationError,
     BatchResult,
 )
+from knowlebase.schemas.errors import BusinessError
+from knowlebase.schemas.resource_errors import ResourceErrorCode
 
 logger = logging.getLogger(__name__)
 
@@ -42,11 +44,7 @@ async def _check_building_lock(db: AsyncSession) -> None:
         select(KnowledgeBaseVersion).where(KnowledgeBaseVersion.status == "building").limit(1)
     )
     if result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": 400, "message": "知识库版本正在构建中，暂不支持此操作",
-                    "detail": {"code_name": "BUILDING_IN_PROGRESS"}},
-        )
+        raise BusinessError(ResourceErrorCode.BUILDING_IN_PROGRESS)
 
 
 class UploadService:
@@ -76,35 +74,16 @@ class UploadService:
     ) -> None:
         """验证文件格式和大小"""
         if len(filename) > 255:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"code": 400, "message": "文件名过长",
-                        "detail": {"field": "filename",
-                                   "error": "文件名长度不能超过255个字符",
-                                   "actual": len(filename)}},
-            )
+            raise BusinessError(ResourceErrorCode.INVALID_PARAMETER, "文件名长度不能超过255个字符")
 
         valid_extensions = {".pdf", ".docx", ".doc"}
         ext = PurePath(filename).suffix.lower()
         if ext not in valid_extensions:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"code": 400, "message": "文件格式不支持",
-                        "detail": {"field": "file",
-                                   "error": f"仅支持 {', '.join(valid_extensions)} 格式",
-                                   "actual": ext or "无扩展名"}},
-            )
+            raise BusinessError(ResourceErrorCode.FILE_FORMAT_NOT_SUPPORTED)
 
         max_size = settings.max_file_size
         if file_size > max_size:
-            max_mb = max_size / (1024 * 1024)
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"code": 400, "message": "文件大小超出限制",
-                        "detail": {"field": "file",
-                                   "error": f"文件大小不能超过 {max_mb:.0f}MB",
-                                   "actual": f"{file_size / (1024 * 1024):.1f}MB"}},
-            )
+            raise BusinessError(ResourceErrorCode.FILE_SIZE_EXCEEDED)
 
     # ---- 重复性检查 ----
 
@@ -146,11 +125,7 @@ class UploadService:
         # 1. 完整性验证
         is_valid, calc_hash, error = await self.verify_file_integrity(content, provided_hash)
         if not is_valid:
-            detail = error.model_dump() if hasattr(error, "model_dump") else str(error)
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"code": 400, "message": "上传文件不完整", "detail": detail},
-            )
+            raise BusinessError(ResourceErrorCode.FILE_HASH_MISMATCH)
 
         # 2. 构建锁检查
         await _check_building_lock(db)
@@ -200,11 +175,7 @@ class UploadService:
             },
         )
         if not result:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail={"code": 500, "message": "文件存储失败",
-                        "detail": "无法将文件保存到存储系统"},
-            )
+            raise BusinessError(ResourceErrorCode.STORAGE_UNAVAILABLE)
 
         processing_id = f"proc_{uuid.uuid4().hex[:12]}"
 
@@ -250,13 +221,16 @@ class UploadService:
                 "status": "success",
             }
 
+        except BusinessError:
+            raise
         except Exception as e:
             await db.rollback()
-            logger.error(f"数据库保存失败: {e}")
+            logger.error(f"数据库保存失败: {e}", exc_info=True)
             try:
                 self.minio_service.delete_file(settings.minio_document_bucket, file_hash)
             except Exception as ce:
                 logger.error(f"清理孤立文件失败: {ce}")
+            raise BusinessError(ResourceErrorCode.DOCUMENT_SAVE_FAILED)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail={"code": 500, "message": "文档保存失败", "detail": str(e)},
@@ -389,15 +363,9 @@ class DocumentService:
         repo = DocumentRepository(db)
         doc = await repo.get_by_id(int(document_id))
         if not doc:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail={"code": 404, "message": "文档不存在", "detail": f"文档ID: {document_id}"},
-            )
+            raise BusinessError(ResourceErrorCode.DOCUMENT_NOT_FOUND)
         if doc.status == "enabled":
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"code": 400, "message": "文档已启用，无需重复操作"},
-            )
+            raise BusinessError(ResourceErrorCode.DOCUMENT_ALREADY_ENABLED)
         doc.enable()
         chunk_repo = DocumentChunkRepository(db)
         await chunk_repo.update_enabled_by_document_id(int(document_id), True)
@@ -409,15 +377,9 @@ class DocumentService:
         repo = DocumentRepository(db)
         doc = await repo.get_by_id(int(document_id))
         if not doc:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail={"code": 404, "message": "文档不存在", "detail": f"文档ID: {document_id}"},
-            )
+            raise BusinessError(ResourceErrorCode.DOCUMENT_NOT_FOUND)
         if doc.status == "disabled":
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"code": 400, "message": "文档已停用，无需重复操作"},
-            )
+            raise BusinessError(ResourceErrorCode.DOCUMENT_ALREADY_DISABLED)
         doc.disable()
         chunk_repo = DocumentChunkRepository(db)
         await chunk_repo.update_enabled_by_document_id(int(document_id), False)
@@ -444,7 +406,7 @@ class DocumentService:
         # 3. 构建锁检查
         try:
             await _check_building_lock(db)
-        except HTTPException:
+        except BusinessError:
             return [BatchResult(id=str(doc_id), status="failed", reason="知识库版本正在构建中，暂不支持此操作") for doc_id in document_ids]
 
         doc_repo = DocumentRepository(db)
