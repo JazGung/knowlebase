@@ -118,8 +118,6 @@ class Settings(BaseSettings):
     embedding_device: str = Field(default="cpu", env="EMBEDDING_DEVICE")
 
     # 文档处理
-    chunk_size: int = Field(default=500, env="CHUNK_SIZE")
-    chunk_overlap: int = Field(default=50, env="CHUNK_OVERLAP")
     max_file_size: int = Field(default=104857600, env="MAX_FILE_SIZE")  # 100MB
 
     # 搜索配置
@@ -133,23 +131,10 @@ class Settings(BaseSettings):
     docker_container: bool = Field(default=False, env="DOCKER_CONTAINER")
 
     # ====================
-    # LLM 模型配置
+    # LLM 配置（通过 Higress AI 网关统一路由）
     # ====================
 
-    # 默认 LLM 配置（MODEL 和 API_KEY 必须有值）
-    default_llm_model: str = Field(default="gpt-4o-mini", env="DEFAULT_LLM_MODEL")
-    default_llm_api_key: str = Field(default="", env="DEFAULT_LLM_API_KEY")
-    default_llm_api_base: str = Field(default="https://api.openai.com/v1", env="DEFAULT_LLM_API_BASE")
-
-    # 分块模型（One-Pass：分块+指代消解+HyDE+图谱三元组）
-    chunking_model: str = Field(default="", env="CHUNKING_MODEL")
-    chunking_api_key: str = Field(default="", env="CHUNKING_API_KEY")
-    chunking_api_base: str = Field(default="", env="CHUNKING_API_BASE")
-
-    # 图片描述模型（视觉模型，用于生成图片文字说明）
-    image_describer_model: str = Field(default="", env="IMAGE_DESCRIBER_MODEL")
-    image_describer_api_key: str = Field(default="", env="IMAGE_DESCRIBER_API_KEY")
-    image_describer_api_base: str = Field(default="", env="IMAGE_DESCRIBER_API_BASE")
+    llm_api_base: str = Field(default="http://higress:8080/v1", env="LLM_API_BASE")
 
     # ====================
     # 分块参数配置
@@ -190,70 +175,6 @@ class Settings(BaseSettings):
             "development_mode": self.is_local_development(),
             "docker_container": self.docker_container,
         }
-
-    # ====================
-    # LLM 配置解析
-    # ====================
-
-    def _resolve_llm_config(self, model: str, api_key: str, api_base: str) -> dict:
-        """解析 LLM 配置
-
-        规则：
-        - MODEL/API_KEY 为空 → 回退到 DEFAULT_LLM_*，仍为空则报错
-        - API_BASE 为空 → 不回退（LangChain 使用自身默认值）
-        """
-        resolved_model = model or self.default_llm_model
-        resolved_api_key = api_key or self.default_llm_api_key
-        resolved_api_base = api_base  # 空值直接传给 LangChain
-
-        if not resolved_model:
-            raise ValueError(
-                "LLM 模型未配置。请设置 DEFAULT_LLM_MODEL 或具体模块的 *_MODEL 环境变量。"
-            )
-        if not resolved_api_key:
-            raise ValueError(
-                f"LLM API Key 未配置（model={resolved_model}）。"
-                "请设置 DEFAULT_LLM_API_KEY 或具体模块的 *_API_KEY 环境变量。"
-            )
-
-        return {
-            "model": resolved_model,
-            "api_key": resolved_api_key,
-            "api_base": resolved_api_base,
-        }
-
-    def get_chunking_llm_config(self) -> dict:
-        """获取分块 LLM 配置"""
-        return self._resolve_llm_config(
-            self.chunking_model,
-            self.chunking_api_key,
-            self.chunking_api_base,
-        )
-
-    def get_image_describer_llm_config(self) -> dict:
-        """获取图片描述 LLM 配置"""
-        return self._resolve_llm_config(
-            self.image_describer_model,
-            self.image_describer_api_key,
-            self.image_describer_api_base,
-        )
-
-    def log_llm_config_summary(self) -> None:
-        """打印 LLM 配置摘要（隐藏 API Key 中间字符）"""
-        def mask_key(key: str) -> str:
-            if len(key) <= 8:
-                return "***"
-            return key[:4] + "..." + key[-4:]
-
-        for name, getter in [("分块", self.get_chunking_llm_config),
-                             ("图片描述", self.get_image_describer_llm_config)]:
-            cfg = getter()
-            logger.info(
-                f"LLM 配置 ({name}): "
-                f"model={cfg['model']}, "
-                f"api_key={mask_key(cfg['api_key'])}, "
-                f"api_base={cfg['api_base'] or '(LangChain 默认)'}"
-            )
 
     # ====================
     # 分块参数解析

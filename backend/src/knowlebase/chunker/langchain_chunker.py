@@ -9,6 +9,7 @@ import re
 from typing import List, Optional, Tuple
 
 from knowlebase.core.config import settings
+from knowlebase.core.llm_client import create_chat_model, SCENE_CHUNKING
 from langchain_core.language_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
@@ -77,20 +78,8 @@ CHUNKING_PROMPT = ChatPromptTemplate.from_messages([
 
 
 def create_llm():
-    """创建 LLM 实例"""
-    from langchain.chat_models import init_chat_model
-
-    cfg = settings.get_chunking_llm_config()
-    kwargs = {
-        "model": cfg["model"],
-        "model_provider": "openai",
-        "api_key": cfg["api_key"],
-        "temperature": 0,
-    }
-    if cfg["api_base"]:
-        kwargs["base_url"] = cfg["api_base"]
-
-    return init_chat_model(**kwargs)
+    """创建 LLM 实例，通过 Higress 路由到分块模型"""
+    return create_chat_model(SCENE_CHUNKING)
 
 
 class LangChainChunker:

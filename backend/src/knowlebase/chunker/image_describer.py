@@ -6,8 +6,8 @@
 import logging
 from typing import Optional
 
-from knowlebase.core.config import settings
 from knowlebase.parsers.image_storage import get_image
+from knowlebase.core.llm_client import create_openai_client, SCENE_IMAGE_DESC
 
 logger = logging.getLogger(__name__)
 
@@ -25,12 +25,6 @@ def describe_image(image_path: str, caption: str = "") -> str:
     Returns:
         图片描述文字
     """
-    try:
-        from openai import OpenAI
-    except ImportError:
-        logger.error("openai 未安装，请运行: pip install openai")
-        raise
-
     img_bytes = get_image(image_path)
     if not img_bytes:
         logger.warning(f"无法下载图片: {image_path}")
@@ -39,18 +33,13 @@ def describe_image(image_path: str, caption: str = "") -> str:
     import base64
     img_base64 = base64.b64encode(img_bytes).decode("utf-8")
 
-    cfg = settings.get_image_describer_llm_config()
-
-    client = OpenAI(
-        api_key=cfg["api_key"],
-        base_url=cfg["api_base"],
-    )
+    client = create_openai_client()
 
     prompt = "请用简洁的中文描述这张图片的内容。如果是图表、流程图或表格，请说明其结构和关键信息。50字以内。"
 
     try:
         response = client.chat.completions.create(
-            model=cfg["model"],
+            model=SCENE_IMAGE_DESC,
             messages=[
                 {"role": "user", "content": [
                     {"type": "text", "text": prompt},
